@@ -1,629 +1,493 @@
 # Pearl Metal Miner — Build Plan
 
-**Status:** sealed
+**Status:** current — supersedes the sealed plan of 2026-08-02 (see §0.2)
 **Verification date:** 2026-08-02
-**Target machine:** MacBook Pro, Apple M1 Max, 32 GB unified memory, 32-core GPU, Metal 3, macOS 14.4.1 (23E224)
+**Target machine:** MacBook Pro, Apple M1 Max, 32 GB unified memory, 32-core GPU,
+Metal 3, macOS 14.4.1 (23E224)
 
-Every external claim in this document carries a verification marker:
+Every external claim carries a verification marker:
 
 | Marker | Meaning |
 | ------ | ------- |
 | ✅ | Verified against the live source, API or hardware on 2026-08-02 |
-| ⚠️ | Assumption. A named test in this plan settles it. Do not build on it before then. |
+| ⚠️ | Assumption. A named step in this plan settles it. Do not build on it before then. |
 | ❌ | Claim that was checked and found false. Recorded so it is not reintroduced. |
+
+Decisions live in `docs/adr/`. Vocabulary lives in `CONTEXT.md`. This file holds
+only what to do, and in what order.
 
 ---
 
 ## TL;DR
 
-We are not writing a Pearl miner from zero. We fork `Muskwak/Open-Pearl-Miner`, keep its wallet, proof, Stratum and pool layers, and replace exactly one thing: the CUDA compute backend, with a bit-exact Metal backend.
+Fork `Muskwak/Open-Pearl-Miner`. Keep its Stratum client and its proof builder
+untouched. Write a Metal backend for the **mining hot loop only**, and a fresh
+~200-line miner around it. Grid setup and the Merkle commitment stay on the
+host.
 
-The scope is **one backend port**, not a cryptocurrency implementation.
+The goal is **one accepted share on a pool dashboard**. It is not profit, and it
+is not a public release.
 
-The single hardest constraint is not performance. It is that Pearl's proof-of-work folds a hash transcript from the **cumulative int32 GEMM partial sums at every k-tile boundary**. There is no tolerance anywhere in this pipeline:
+The load-bearing constraint is that Pearl's proof-of-work folds a hash
+transcript from the **cumulative int32 partial sums at every k-tile boundary**:
 
 ```text
 correct   = identical bytes
-incorrect = rejected share
+incorrect = rejected share, silently
 ```
 
 ---
 
-## 0. Ground truth established before planning
+## 0. Ground truth
 
-### 0.1 What was verified
+### 0.1 Verified
 
-| Claim | Status | Evidence |
-| ----- | ------ | -------- |
-| `Muskwak/Open-Pearl-Miner` exists, is the right fork base | ✅ | GitHub API. `python/{cuda_capi,pearl_host,luckypool_miner,gateway_client,mining_config}.py` and `csrc/{blake3,capi,gemm,tensor_hash}` all present. Language: Cuda. Last push 2026-07-05. |
-| `pearl-research-labs/pearl` monorepo is live | ✅ | 282★, last push 2026-08-01. Default branch is **`master`**, not `main`. |
-| Pearl Stratum V1 spec repo exists | ✅ | `nushypool/pearl_stratum_protocol_v1`, last push 2026-06-13. |
-| arXiv 2606.04819 is real, and the 21,693 tiles/s M2 Metal figure is real | ✅ | "The Usefulness Gap in Proof-of-Useful-Work: An Empirical Study of Pearl's cuPOW Protocol", published 2026-06-03. Figure appears verbatim in the abstract. |
-| M1 is GPU family Apple7 and supports `simdgroup_matrix` | ✅ | Apple7 introduced SIMD-scoped matrix ops (Metal 2.3+). Hardware confirms Metal 3 support. |
-| A and Bᵀ fit in unified memory; the full output never can | ✅ | At M=N=131072, K=4096: each operand 131072 × 4096 × 1 B = 512 MiB, ~1 GiB total. Full int32 output would be 131072² × 4 B = 64 GiB. The miner must never materialize it. |
+| Claim | Evidence |
+| ----- | -------- |
+| `Muskwak/Open-Pearl-Miner` is the right fork base ✅ | GitHub API. `python/{cuda_capi,pearl_host,miner_capi,pool_common,luckypool_miner}.py` and `csrc/{blake3,capi,gemm,tensor_hash}` all present. Last push 2026-07-05. |
+| **The mandated dimensions are M = N = 131072, K = 4096, R = 256, HT = 16** ✅ | `python/pool_common.py:16-19`, and `real_config()` builds the `MiningConfiguration` with `common_dim=K, rank=R, mma_type=Int7xInt7ToInt32`. |
+| **`miner_capi.py` is the torch-free miner; `luckypool_miner.py` is the torch one** ✅ | `miner_capi.py` docstring: *"Same pipeline as luckypool_miner.py but with NO torch."* `luckypool_miner.py` imports `torch` and `p40_pearl_gemm_cuda`. |
+| **`p40_setup_job` generates A/B and commits them on the GPU** ✅ | `csrc/capi/p40_capi.cu:113` — `launch_fill_rand_i8` ×2 → `launch_transpose_i8` → `tensor_hash` ×2 → `commitment_hash_from_merkle_roots`. |
+| **The miner chooses A and B; the job fixes only the key and target** ✅ | `miner_capi.mine_job` docstring: *"the job only fixes the key (from the header) and the target — the A,B matrices are miner-chosen (random Philox seed)."* |
+| **`pow_key` is `noise_seed_A` (== commitment A), not the job key** ✅ | `luckypool_miner.py:248-250`, which warns that using the job key makes every win fail the verifier. |
+| **The digest bound is `target × 16 × 16 × K`** ✅ | `miner_capi.mine_job`: `factor = cfg.hash_tile_h * cfg.hash_tile_w * cfg.rounded_common_dim; bound = min(target_int * factor, 2²⁵⁶−1)`. |
+| **Upstream's licence mandates a 2% dev fee** ✅ | `LICENSE` clause 2, with a personal-use exemption in clauses 3–4. See [ADR-0003](docs/adr/0003-private-repo-and-no-dev-fee.md). |
+| **Pool endpoints** ✅ | `miner_capi.py:41-42` — `pearl-eu2.luckypool.io:3360` (GPU difficulty), `pearl-cpu-eu1.luckypool.io:3370` (low difficulty). We use the latter. |
+| **`py-pearl-mining` ships a reference miner and a verifier with a difficulty override** ✅ | `py-pearl-mining/src/lib.rs` — `mine(m,n,k,header,config,signal_range,wrong_jackpot_hash)` and `verify_plain_proof(header, proof, nbits_override=None)`. |
+| **Runtime MSL compilation needs no Xcode; int32 MAC is exact on this GPU** ✅ | `tools/metal_probe.mm`, built with Command Line Tools only and run on this machine. See [ADR-0004](docs/adr/0004-no-xcode-runtime-shader-compilation.md). |
+| **Economics** ✅ | hashrate.no, 2026-08-02: PRL $0.26, network 28.54 EH/s, block reward 2460 PRL, **$0.00829 per TH/s per day**. |
 
-### 0.2 What was checked and found false
+### 0.2 Checked and found false
 
-| Original claim | Status | Reality |
-| -------------- | ------ | ------- |
-| `pip install py-pearl-mining` | ❌ | Not on PyPI. Five name variants checked (`py-pearl-mining`, `py_pearl_mining`, `pypearl-mining`, `pearl_mining`, `pearlmining`) — all HTTP 404. It is a maturin/PyO3 Rust extension living at `py-pearl-mining/` inside the monorepo, version 0.2.0, `requires-python >=3.12`. Must be built from source. See Phase 0. |
-| "No Apple pool share exists; we close that gap" | ❌ | The paper's own conclusion states 44 pool-accepted shares "across NVIDIA, AMD, CPU, and **Apple Silicon** hardware." A pool-accepted Metal share almost certainly already exists. This project is a personal milestone and a clean-room reimplementation, **not** a first. Do not frame it as one. |
-| The paper's Metal source can be reused | ❌ | The paper's code repo `abhinaba/pearl-usefulness-gap` returns HTTP 404 — pulled or made private. GitHub repo search finds no mirror. We get no head start from it. |
-| M1 supports "Metal 3 and Metal 4" | ❌ | This machine reports **Metal 3**. Metal 4 requires a far newer macOS. Compile with `-std=metal3.0`. Assume nothing from Metal 4. |
-| Backend B = `simdgroup_matrix` on int8 | ❌ | MSL's `simdgroup_matrix<T,…>` supports `half` / `float` / `bfloat` only. There is **no integer variant on any Apple GPU** — this is a language-level absence, not an M1 limitation. Apple also exposes no DP4A-equivalent int8 dot product. The corrected design is §3. |
-| "Pearl matrices are −64…64, so accumulation is small" | ❌ | That range applies to the **committed** matrices A and B, which the verifier range-checks (`MMAType.Int7xInt7ToInt32`). The operands that actually feed the PoW GEMM are the **noised, int8-clamped** matrices `ApEA` and `BpEB`, whose range is roughly ±126. This distinction drives the entire numeric-exactness analysis in §3. |
+The first eight were found before this plan's first draft. The rest were found
+on 2026-08-02 by checking the earlier draft against upstream source, and each
+one would have cost real time.
 
-### 0.3 Local toolchain gaps (measured, not assumed)
+| Claim | Reality |
+| ----- | ------- |
+| `pip install py-pearl-mining` | ❌ Not on PyPI. It is a maturin/PyO3 Rust extension inside the monorepo, `requires-python >=3.12`. Build from source. |
+| "No Apple pool share exists; we close that gap" | ❌ The paper reports pool-accepted shares across *"NVIDIA, AMD, CPU, and Apple Silicon"*. But see the next row — no Apple Silicon *miner* is public. |
+| The paper's Metal source can be reused | ❌ `abhinaba/pearl-usefulness-gap` returns HTTP 404. No mirror. |
+| M1 supports "Metal 3 and Metal 4" | ❌ Metal 3. Confirmed directly by `tools/metal_probe.mm`: `MTLGPUFamilyApple7` yes, `Apple8` no. |
+| Backend B = `simdgroup_matrix` on int8 | ❌ MSL's `simdgroup_matrix` supports `half`/`float`/`bfloat` only. No integer variant on any Apple GPU, and no DP4A equivalent. |
+| "Pearl matrices are −64…64, so accumulation is small" | ❌ That range is the **committed** matrices (`MMAType.Int7xInt7ToInt32`). The GEMM consumes the **noised, int8-clamped** operands, range ≈ ±127. |
+| **R = 128** | ❌ **R = 256.** `pool_common.py:18`. The paper's figure is not this miner's constant. |
+| **"Read the actual R from a real job"** | ❌ R is a **client-side constant**, not a job field. There is nothing to read. It must match consensus, so it is a thing to *verify*, not to discover. |
+| **"Reuse `luckypool_miner.py` unchanged, inject the Metal backend"** | ❌ That file imports `torch` and calls the compiled torch extension `p40_pearl_gemm_cuda`, not `cuda_capi`. The torch-free path is `miner_capi.py`. |
+| **"Commitments and Merkle stay on CPU — `pearl_host.py` already does this"** | ❌ Not in the path that matters: `miner_capi.mine_job` calls `cc.setup_job(...)` per grid, which commits **on the GPU**. A host path exists and we are choosing it ([ADR-0001](docs/adr/0001-metal-port-covers-the-hot-loop-only.md)) — but that is a decision, not a description of upstream. |
+| **"`xcrun metal` missing is a BLOCKER"** | ❌ macOS ships the shader compiler inside the Metal framework. `newLibraryWithSource:` compiles at runtime with no Xcode, and the CLT SDK carries the Metal headers. Proven on this machine. |
+| **"Verify locally before every submission"** (as written) | ❌ Misleading. `verify_proof_local(header, proof)` checks **block** difficulty — upstream's own log calls it *"informational"* and it returns `False` for valid shares. It only means something with `nbits_override` set to the pool's share difficulty. |
+| **Stretch target ≥ 21,693 tiles/s** | ❌ Not a meaningful gate. Upstream's own logs put a Pascal card at ~7.25 TH/s ≈ **7.25M tiles/s** — ~334× the paper's M2 figure. Left as a curiosity, not a target. |
+| **`MTLCreateSystemDefaultDevice()`** | ❌ Returns **nil** for a plain command-line binary on this machine. Use `MTLCopyAllDevices()[0]`. |
+
+### 0.3 Local toolchain (measured)
 
 ```text
-xcode-select -p     → /Library/Developer/CommandLineTools   (Command Line Tools only)
-xcrun metal         → error: unable to find utility "metal"  ← BLOCKER
-python3             → 3.10.2
-python3.12          → 3.12.1                                 ← OK
-cargo               → command not found                      ← BLOCKER
+xcode-select -p     → /Library/Developer/CommandLineTools   (sufficient — see ADR-0004)
+xcrun metal         → not found                              (NOT a blocker)
+clang++             → Apple clang 15.0.0, arm64              OK
+Metal.framework     → present in the CLT SDK                 OK
+python3.12          → 3.12.1                                 OK
+cargo               → not found                              ← the only real blocker
 ```
-
-Two hard blockers before a single line of Metal can compile. Both are resolved in Phase 0.
 
 ---
 
 ## 1. Definition of done
 
 ```text
-M1 Max connects to a Pearl pool
+M1 Max connects to LuckyPool's low-difficulty endpoint
 → receives a job
-→ generates valid Pearl PoW using Metal
-→ builds a PlainProof
-→ verifies it locally with py-pearl-mining
+→ generates a grid and commits it on the host
+→ mines it with Metal
+→ finds a winning hash tile
+→ builds a PlainProof and verifies it locally AT SHARE DIFFICULTY
 → submits it
-→ pool reports ACCEPTED
+→ the worker appears on the pool dashboard with an accepted share
 ```
 
-The first milestone is an **accepted share**, not profitability.
+**Economics, stated so they are not rediscovered later.** At $0.00829/TH/s/day,
+upstream's Pascal card earns about **$0.06/day**. This machine draws 60–90 W
+mining, i.e. **$0.25–0.75/day** of electricity. Mining loses roughly 9× what it
+earns at any speed. Pool payout thresholds mean coins may never actually move.
 
-**Economics, stated plainly so it is not discovered later.** The paper this plan draws its benchmark from concludes that Pearl's PoUW performs zero useful AI computation and that mining is unprofitable at the PRL price it measured ($0.21) across every hardware class it tested — NVIDIA, AMD, CPU and Apple Silicon. This project is worth doing as an engineering exercise and for the accepted share. It is not worth doing for the yield. Nothing in this plan should be read as a profitability forecast.
+**The milestone is the accepted share on the dashboard, not the coins.** This is
+built because its owner wants it built. See
+[ADR-0002](docs/adr/0002-backend-a-only.md) and
+[ADR-0003](docs/adr/0003-private-repo-and-no-dev-fee.md).
 
 ---
 
-## 2. The actual PoW specification
+## 2. The proof-of-work specification
 
-This is the part the previous draft got wrong, and it constrains every kernel decision. Source: `csrc/gemm/pearl_pow_sm61.cu`, which documents itself as reproducing the reference miner's `noisy_gemm.py` → `_tiled_matmul` + `_check_pow_target`. ✅
+Source: `csrc/gemm/pearl_pow_sm61.cu`, which documents itself as reproducing the
+reference `noisy_gemm.py` → `_tiled_matmul` + `_check_pow_target`. ✅ The Python
+reference lives in the monorepo at
+`miner/miner-base/src/miner_base/`, **not** in the fork base.
 
 ### 2.1 Per-tile algorithm
 
-For noised operands `A` (m × k) and `Bᵀ` (n × k), both **int8**, computed independently per **16 × 16** output "hash" tile (`HT = 16`):
+For noised operands `A` (m × k) and `Bᵀ` (n × k), both int8, computed
+independently per 16 × 16 hash tile:
 
 ```text
 transcript[0..15] = 0
 
-for t in 0 .. k/R - 1:                       # k is tiled by R = noise rank
+for t in 0 .. k/R - 1:                       # R = 256
     Csum += A[tile, t*R:(t+1)*R] @ Bt[tile, t*R:(t+1)*R]ᵀ    # CUMULATIVE int32
     h     = XOR over the 256 int32 of the CUMULATIVE Csum (as uint32)
     transcript[t % 16] = rotl32(transcript[t % 16], 13) ^ h   # HASH_ROT = 13
 
 digest = BLAKE3(transcript[16 × u32, little-endian], key = pow_key)
-tile wins if digest <= pow_target        # uint256, little-endian
+tile wins if digest <= bound              # uint256, little-endian
 ```
 
-### 2.2 Consequences that shape the kernel
+With K = 4096 and R = 256 there are **16 fold points**, so each transcript slot
+is written exactly once. `pow_key` is `noise_seed_A`. `bound` is the pool's
+target multiplied by `16 × 16 × 4096`.
 
-1. **The transcript folds from the *cumulative* sum, at every R-boundary.** You cannot compute a final 16×16 tile and hash it. Every intermediate cumulative `Csum` must be bit-exact int32 at each of the `k/R` boundaries. This is the load-bearing constraint of the whole port.
-2. **The k-loop granularity is fixed at R.** It is not a free tuning parameter. Autotuning may vary threadgroup shape and staging, never the R-boundary fold points.
-3. **XOR is associative and commutative, so the 256-element reduction order is irrelevant.** ✅ The kernel comment states this explicitly. This is real freedom: use any SIMD reduction order Metal makes fast.
-4. **Alignment assumptions:** `m % 16 == 0`, `n % 16 == 0`, `k % R == 0`. Partial edge tiles and partial k-tiles **do not contribute** to the PoW in the reference and are out of scope. Do not "helpfully" handle them — that would diverge from consensus.
-5. **BLAKE3 must run on the GPU.** It is a keyed BLAKE3 over a 64-byte transcript — a *single* keyed block with `CHUNK_START|CHUNK_END|ROOT` flags. No chunking, no tree, no parent nodes. This is a small, bounded port, but the previous draft omitted it entirely. Reference: `csrc/gemm/pearl_blake3_sm61.cu` and `csrc/blake3/`.
+### 2.2 Consequences
 
-### 2.3 Noise structure
+1. **The transcript folds from the *cumulative* sum at every R-boundary.** You
+   cannot compute a final tile and hash it. Every intermediate cumulative value
+   must be bit-exact int32. This is the constraint the whole port serves.
+2. **The k-loop granularity is fixed at R.** Never a tuning parameter.
+3. **XOR is associative and commutative, so the 256-element reduction order is
+   free.** ✅ Stated explicitly in the kernel comment. Use whatever Metal makes
+   fast.
+4. **Alignment:** `m % 16 == 0`, `n % 16 == 0`, `k % R == 0`. Partial tiles do
+   not contribute and are out of scope. Do not "helpfully" handle them.
+5. **BLAKE3 runs on the GPU**, keyed, over a single 64-byte block with
+   `CHUNK_START|CHUNK_END|ROOT`. No chunking, no tree. **The same primitive also
+   drives noise generation** (§2.3), so it is written once.
 
-Source: `csrc/gemm/noising_sm61.cu`. ✅
+### 2.3 Noise
+
+Source: `csrc/gemm/noising_sm61.cu` and `miner_base/noise_generation.py`. ✅
 
 ```text
-EAL  [M, R]   dense int8,  values in [-32, 32)
-EBR  [N, R]   dense int8,  values in [-32, 32)
+EAL  [M, R]   dense int8, from keyed BLAKE3 of (index, seed)
+EBR  [N, R]   dense int8, likewise
 EAR, EBL      sparse int8, exactly one +1 and one −1 per K position
 
 ApEA[m,k] = clamp_i8( A[m,k] + Σ_r EAL[m,r] · EAR_Rmaj[k,r] )
 BpEB[n,k] = clamp_i8( B[n,k] + Σ_r EBR[n,r] · EBL_Rmaj[k,r] )
 ```
 
-The kernel comment justifies the int8 fit as: `A ∈ [-63, 63]` and the noise term `∈ (-64, 64)`. The clamp is to full int8 range (±127) and is a safety net that essentially never fires.
+**The GEMM operand bound is therefore |operand| ≤ 127, not 64.**
 
-**Therefore the GEMM operand bound is |operand| ≤ 127, and realistically ≤ 126.** Not 64.
+Noise generation needs roughly 2.1M keyed BLAKE3 digests per grid. ⚠️ Python is
+too slow for this (est. 7–10 s/grid) and `py-pearl-mining` does not expose it
+separately, so it must be a Metal kernel. Settled in Phase 3.
 
 ---
 
-## 3. Numeric exactness — the load-bearing analysis
+## 3. Numeric exactness
 
-`simdgroup_matrix` has no integer type, so any use of Apple's matrix hardware means float accumulation. Float accumulation is acceptable **only if it is provably exact for every representable input**. Here is that proof obligation, worked.
+**Backend A accumulates in int32 and is exact by construction.** Worst case is
+`127 × 127 × 4096 = 66,064,384`, which fits int32 with three orders of magnitude
+to spare.
 
-### 3.1 The bound
+This was not merely argued — `tools/metal_probe.mm` ran exactly that worst case
+on this GPU on 2026-08-02 and returned 66,064,384 for 256/256 rows. ✅
 
-float32 represents every integer in `[−2²⁴, 2²⁴]` exactly, and `2²⁴ = 16,777,216`.
-
-```text
-Worst-case single R-chunk partial:   127 × 127 × R  =  16,129 · R
-Exactness requires:                  16,129 · R  ≤  2²⁴
-                                     R  ≤  1,040
-```
-
-With **R = 128** (the rank used in the paper's runs ⚠️ — read it from the job, never hardcode):
+**Why Backend B is deferred, kept here so the reasoning is not lost.**
+`simdgroup_matrix` has no integer type, so it would accumulate in fp32, exact
+only while every partial stays inside `[−2²⁴, 2²⁴]`:
 
 ```text
-127 × 127 × 128 = 2,064,512      vs  2²⁴ = 16,777,216
-→ 8.1× headroom, about 3 spare bits.       SAFE
+per R-chunk worst case:  127 × 127 × 256 = 4,129,024   vs  2²⁴ = 16,777,216
+                         → 4.06× headroom, about 2 spare bits
+full-K worst case:       127 × 127 × 4096 = 66,064,384  > 2²⁴
+                         → fp32 CANNOT hold the cumulative sum. int32 is mandatory.
 ```
 
-Every intermediate partial sum inside a chunk is an integer bounded by the same value, so every add is exact — integer + integer ≤ 2²⁴ never rounds.
+So the chunked shape would work in principle — but the argument also assumes
+IEEE fp32 semantics from undocumented Apple matrix hardware, and a violation
+would not crash, it would silently emit rejected shares. Backend B buys only
+speed, and speed is worth $0.00 here. See
+[ADR-0002](docs/adr/0002-backend-a-only.md).
 
-### 3.2 Why the cumulative sum must stay int32
-
-```text
-Full-K cumulative worst case:  127 × 127 × 4096 = 66,064,384  >  2²⁴
-→ needs 26 bits. float32 CANNOT hold it exactly.
-```
-
-**Correction to an earlier assessment in this project:** an intermediate draft argued that because elements are −64…64 and K = 4096, the accumulator peaks at exactly 64·64·4096 = 2²⁴ and fp32 is therefore exact across the whole K dimension. That is wrong. It used the committed-matrix range instead of the noised-operand range. With the true ±127 operand bound, full-K fp32 accumulation is off by a factor of ~4 and would silently corrupt shares.
-
-### 3.3 The resulting design — and why it is natural
-
-The algorithm already tiles k by R and already needs an exact int32 cumulative sum at each R-boundary. That is precisely the chunking that makes fp32 safe:
-
-```text
-per R-chunk:     fp32 simdgroup_matrix   (exact — 8× headroom, §3.1)
-                        ↓ convert to int32 (exact, values well inside int32)
-cumulative:      int32 accumulate         (exact — required by §2.2.1 anyway)
-                        ↓
-                 XOR-fold transcript at the R-boundary
-```
-
-The exactness requirement and the PoW's own structure agree. No K-splitting gymnastics are needed.
-
-### 3.4 Non-negotiables
-
-- **fp16 is disqualified.** 11-bit mantissa. Not remotely sufficient. Never use `simdgroup_matrix<half>` on this path.
-- **`kIntToFp16ScaleFactor` and friends in `pearl_gemm_constants.hpp` belong to the CUDA *denoise* path, not the PoW path.** Do not import that scaling scheme into the Metal PoW kernel by pattern-matching.
-- **Backend A must exist and must never be deleted.** It is the fallback if §3.1 fails for the job's actual R, and it is the differential oracle for Backend B forever.
+**Non-negotiable:** fp16 is disqualified anywhere on this path. 11-bit mantissa.
 
 ---
 
 ## 4. Architecture
 
-### 4.1 The interface to mirror — real, not invented
-
-`metal_capi.py` must expose the same surface as `python/cuda_capi.py`. This is the **actual** exported C API, read from source ✅ — the previous draft invented a `PearlCandidate` struct that does not exist:
-
-```c
-/* lifecycle & memory */
-int  p40_init(void);                  /* called at import time in cuda_capi.py — mirror this */
-int  p40_device_count(void);
-     p40_malloc(void**, size_t);
-     p40_free(void*);
-     p40_memcpy_htod(void*, void*, size_t);
-     p40_memcpy_dtoh(void*, void*, size_t);
-     p40_memset(void*, int, size_t);
-     p40_sync(void);
-
-/* data movement */
-     p40_transpose_i8(src, dst, rows, cols, src_ld, col_off);
-
-/* job + noise */
-     p40_setup_job(A, B, Bt, key, nsA, nsB, M, N, K, R, seed /*u64*/);
-     p40_noise_gen(EAL, EAR, EBL, EBR, key_A, key_B, m, n, k, R);
-     p40_noise_apply_A(A, EAL, EAR_t, EBL_t, ApEA, AxEBL, M, K, R);
-     p40_noise_apply_B(B, EBR, EAR, EBL, BpEB, EARxBpEB, N, K, R);
-     p40_noise_gemm(X, Y, Z, out, M, K, R);   /* out = clamp_i8(Z + X @ Yᵀ over R) */
-
-/* the PoW itself */
-     p40_pearl_pow_split(A, Bt, m, n, k, R, key, target,
-                         transcript, digests, found, coord, variant);
+```text
+ metal_miner.py        ← ours, ~200 lines: connect, grid, mine, throttle, submit
+   ├── pool_common.py  ← upstream, UNCHANGED (Stratum client, mandated config)
+   ├── pearl_host.py   ← upstream, UNCHANGED (commitment, proof, local verify)
+   └── metal_capi.py   ← ours (ctypes → libp40metal.dylib)
+         └── csrc/metal/  ← ours (Objective-C++ host + embedded MSL)
 ```
 
-`p40_pearl_pow_split` contract, from the source docstring ✅:
+### 4.1 What Metal implements
 
-- `transcript` — caller-owned reusable buffer, `≥ (m/16)·(n/16)·16` uint32.
-- `digests` — `[num_tiles, 32]` uint8, **may be null**; mining only needs `found`/`coord`.
-- `found` / `coord` — the only outputs the mining loop consumes. **No output matrix is ever returned.** The plan's original instinct here was right; only the struct was fictional.
+Four kernels. Everything else is host-side.
 
-Every function returns `0` on success; `cuda_capi._chk` raises otherwise. Mirror that convention exactly.
+| Kernel | Purpose |
+| ------ | ------- |
+| `blake3` | Keyed BLAKE3, single 64-byte block. Serves both noise generation and the jackpot digest. |
+| `noise_gen` | EAL, EAR, EBL, EBR from the two noise seeds. |
+| `noise_apply` | `ApEA`, `BpEB` — `clamp_i8(base + low-rank product)`. |
+| `pow` | Fused: GEMM → cumulative int32 → transcript fold → BLAKE3 → target compare. Emits `found` and `coord` only. |
 
-### 4.2 Library naming
+**Never materialise an output matrix.** At M = N = 131072 the full int32 output
+would be 64 GiB. The operands are ~1 GiB total and fit comfortably.
 
-`cuda_capi.py` loads `p40cuda.dll` on Windows, else **`libp40cuda.so`** — note `.so`, not `.dylib`. ✅ The macOS backend ships as **`libp40metal.dylib`** and `metal_capi.py` gets its own loader with the same search-path logic (next to the module, package root, `sys._MEIPASS` for frozen builds).
+### 4.2 What the host does
 
-### 4.3 Selection
+Generate A and B (any RNG — they are miner-chosen), compute the commitment via
+`pearl_host.commitment_hashes`, build and verify the proof on a hit. See
+[ADR-0001](docs/adr/0001-metal-port-covers-the-hot-loop-only.md).
 
-```python
-if backend == "cuda":
-    import cuda_capi as compute_backend
-elif backend == "metal":
-    import metal_capi as compute_backend
-```
+`metal_capi` is therefore **not** a drop-in for `cuda_capi`: there is no
+`p40_setup_job`. That is deliberate.
 
-Pool, proof and orchestration layers stay unchanged.
+### 4.3 Device notes (measured, §0.1)
 
-### 4.4 Which CUDA path to port from
+- Use `MTLCopyAllDevices()[0]`. `MTLCreateSystemDefaultDevice()` returns nil.
+- **Threadgroup memory: 32,768 bytes.** The binding constraint on tiling. A
+  16-row × 256-column int8 stage for each operand is 4 KB each — ample room.
+- Max 1024 threads per threadgroup. A 16 × 16 tile maps to 256 threads.
+- Unified memory: `MTLResourceStorageModeShared` everywhere; host/device copies
+  are memory writes, not transfers.
 
-Port from the **sm61 / Pascal** path, not the Ampere tensor-core path.
+### 4.4 Which CUDA path to read
 
-| File | Size | Role |
-| ---- | ---: | ---- |
-| `pearl_pow_sm61.cu` | 6 KB | **The PoW reference.** Readable, fully documented, has a scalar int8 fallback next to the DP4A intrinsic that ports almost directly. |
-| `pearl_pow_fused_sm61.cu` | 10 KB | Fused variant — the Phase 6 target shape |
-| `noising_sm61.cu` | 5 KB | Noise application |
-| `noise_gemm_sm61.cu` | 3.5 KB | `clamp_i8(Z + X@Yᵀ)` |
-| `pearl_blake3_sm61.cu` | 3 KB | Keyed BLAKE3 on GPU |
-| `rng_fill_sm61.cu` | 3.5 KB | Deterministic fill |
-| ~~`pearl_ampere_tc.cu`~~ | 62 KB | **Do not port from this.** Tensor-core-specific, ten times the size, no analogue on Apple hardware. |
+Port from the **sm61 / Pascal** path. `pearl_pow_sm61.cu` (6 KB) is the readable
+reference and carries a scalar int8 `#else` branch that is the direct model for
+our kernel. `noising_sm61.cu`, `pearl_blake3_sm61.cu` and `rng_fill_sm61.cu`
+cover the rest. **Do not read `pearl_ampere_tc.cu`** (62 KB, tensor-core
+specific, no Apple analogue).
 
-The sm61 path uses DP4A (`dp4a.s32.s32`) for the int8 contraction. Metal has no DP4A equivalent — that gap *is* the port. Usefully, the same file carries a `#else` scalar branch that extracts and multiplies int8 lanes explicitly; that branch is the direct model for Backend A.
+### 4.5 Out of scope
 
-### 4.5 Umbrel
-
-Umbrel does not run Metal computation. Ever.
-
-**V1** — MacBook runs pool client, Metal miner, proof builder, submission. Umbrel untouched.
-**V2** — Umbrel runs `pearld` + gateway/P2Pearl + monitoring. MacBook is a mining worker only.
-
-V2 begins only after the first accepted share. One open input: **what hardware is the Umbrel on** (Raspberry Pi / Umbrel Home / Intel-AMD mini-PC / other)? That decides whether `pearld` is even viable there.
+- Umbrel / `pearld` / P2Pearl. Revisit only after an accepted share, if ever.
+- zk certificates (V1 ZkDense, V2 ZkMoe). Shares carry a `PlainProof` with an
+  empty certificate slot. ✅
+- Multi-GPU, solo mining, gateway mode, HiveOS packaging.
+- Backend B, and any optimisation phase.
 
 ---
 
 ## 5. Build plan
 
-### Phase 0 — Toolchain
+### Phase 0 — Toolchain and wallet (2–3 hours)
 
-**Effort:** 2–4 hours (dominated by the Xcode download)
-**KPI:** `xcrun metal -v` responds; `import pearl_mining` succeeds.
-
-Both blockers from §0.3 are resolved here. This phase is entirely rewritten — the original `pip install py-pearl-mining` step could not have worked.
+**Gate:** `import pearl_mining` succeeds; a `prl1p…` address exists.
 
 ```bash
-# ---- 1. Metal compiler --------------------------------------------------
-# Command Line Tools do NOT ship the `metal` compiler. Full Xcode is required.
-# macOS 14.4.1 caps you at the Xcode 15.x line (Xcode 16 requires macOS 14.5+).
-# Install Xcode 15.4 from developer.apple.com/download (Apple ID required),
-# OR update macOS first and take the current Xcode.
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-xcrun -sdk macosx metal -v            # MUST respond before Phase 2
-
-# ---- 2. Rust + maturin (for py-pearl-mining) ----------------------------
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
-cargo --version
 
-# ---- 3. Python env ------------------------------------------------------
 python3.12 -m venv .venv && source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install numpy blake3 pytest maturin
 
-# ---- 4. Build py-pearl-mining FROM SOURCE (it is not on PyPI) -----------
-git clone https://github.com/pearl-research-labs/pearl.git
-cd pearl                              # NOTE: default branch is `master`
-git rev-parse HEAD > ../PINNED_PEARL_COMMIT.txt   # pin it, §7 risk row
-cd py-pearl-mining
-maturin develop --release             # installs into the active venv
-cd ../..
-
-# ---- 5. Fork the miner --------------------------------------------------
-git clone https://github.com/Muskwak/Open-Pearl-Miner.git
-cd Open-Pearl-Miner
-git rev-parse HEAD > ../PINNED_MINER_COMMIT.txt
-git checkout -b feature/apple-metal
-
-# ---- 6. Verify ----------------------------------------------------------
-python - <<'PY'
-import numpy, blake3, pearl_mining
-print("NumPy:", numpy.__version__)
-print("BLAKE3: OK")
-print("pearl_mining: OK", getattr(pearl_mining, "__version__", "(no __version__)"))
-PY
+git clone https://github.com/pearl-research-labs/pearl.git   # default branch: master
+cd pearl && git rev-parse HEAD > ../PINNED_PEARL_COMMIT.txt
+cd py-pearl-mining && maturin develop --release && cd ../..
 ```
 
-**Gate — all must pass before Phase 1:**
+Import upstream's miner into this repo, preserving history:
 
-```text
-[ ] xcrun -sdk macosx metal -v  responds
-[ ] cargo --version  responds
-[ ] import pearl_mining  succeeds
-[ ] both upstream commits pinned to files
+```bash
+git remote add upstream https://github.com/Muskwak/Open-Pearl-Miner.git
+git fetch upstream
+git merge --allow-unrelated-histories upstream/main
+git rev-parse upstream/main > PINNED_MINER_COMMIT.txt
 ```
+
+Install the official Pearl desktop wallet from
+`pearl-research-labs/pearl` releases and record the receiving address.
+
+No Xcode. No `metal` compiler. See [ADR-0004](docs/adr/0004-no-xcode-runtime-shader-compilation.md).
 
 ---
 
-### Phase 1 — CPU oracle and the exactness decision
+### Phase 1 — Prove the pool pipeline before writing any Metal (0.5 day)
 
-**Effort:** 1 day
-**KPI:** 20/20 reduced-difficulty proofs verify locally, **and** the §3 exactness bound is confirmed against the job's real R.
+**KPI:** an accepted share on the dashboard, produced by `pm.mine`.
 
-Nothing is optimized here. Two jobs: build the oracle, and settle the one question that decides the Phase 3 kernel strategy.
-
-#### 1a. Settle the exactness bound first
-
-This is a half-hour of NumPy and it gates a multi-day design choice. Do it before anything else.
+This is the highest-value half-day in the plan. It exercises wallet, Stratum,
+job parsing, proof serialisation, submission and acceptance — everything except
+the GPU — while there is still nothing of ours to blame.
 
 ```text
-[ ] Read the actual R (noise rank) from a real job — do not assume 128
-[ ] Confirm operand range: instrument ApEA / BpEB, record true min/max
-[ ] Assert 127² · R ≤ 2²⁴  (i.e. R ≤ 1040) for the observed R
-[ ] Empirically confirm clamp_i8 fires never or almost never
-[ ] Record the result in this repo as EXACTNESS.md
+[ ] Connect to pearl-cpu-eu1.luckypool.io:3370, authorize wallet.worker
+[ ] Capture one real mining.notify; record job_id, header, target, difficulty
+[ ] Assert the advertised config matches pool_common: M=N=131072, K=4096, R=256
+[ ] Record the share difficulty  ← determines whether shares take minutes or days
+[ ] Mine one proof with pm.mine() at reduced size/difficulty
+[ ] Verify it with verify_plain_proof(header, proof, nbits_override=<share nbits>)
+[ ] Submit it; confirm the pool accepts and the worker appears
 ```
 
-**Decision rule:**
-
-| Outcome | Phase 3 strategy |
-| ------- | ---------------- |
-| `127² · R ≤ 2²⁴` | Backend B via fp32 `simdgroup_matrix` per R-chunk is **provably exact**. Build both backends. |
-| `127² · R > 2²⁴` | Backend B as specified is **dead**. Backend A (manual int32) becomes the only path; performance targets in §6 must be renegotiated before committing further days. |
-
-#### 1b. Build the oracle
-
-The true reference is the miner-base `noisy_gemm.py` — `_tiled_matmul` and `_check_pow_target` — which is what `pearl_pow_sm61.cu` documents itself as reproducing. `pearl_host.py` (3.3 KB) sits *above* this, handling commitments, Merkle trees, `MatrixMerkleProof`, `PlainProof` and the call into Pearl's verifier. Both are needed; do not confuse their roles.
-
-Deterministic fixtures must capture:
-
-```text
-header bytes                    noise seeds and rank R
-mining configuration            EAL / EBR / EAR / EBL
-A matrix, Bᵀ matrix             ApEA / BpEB (post-clamp)
-expected commitment roots       cumulative Csum at EVERY R-boundary   ← critical
-expected transcript[16]         expected per-tile BLAKE3 digest
-expected winning row/col        serialized PlainProof
-```
-
-The per-R-boundary cumulative sums are the fixture that catches the class of bug that would otherwise only surface as a silently rejected share.
-
-**Gate:**
-
-```text
-[ ] Commitment hashes match fixture
-[ ] Noise generation matches reference bit-for-bit
-[ ] ApEA / BpEB match reference (including clamp behaviour)
-[ ] Cumulative Csum matches at EVERY R-boundary, not just the final one
-[ ] transcript[16] matches after every fold
-[ ] Keyed BLAKE3 digest matches blake3.blake3(transcript_bytes, key=pow_key)
-[ ] Target comparison matches (uint256, LITTLE-endian — verify the direction)
-[ ] Proof serialization round-trips
-[ ] 20/20 reduced-difficulty proofs verify via py-pearl-mining
-```
+If this phase cannot produce an accepted share, **stop**. Nothing downstream
+can succeed, and the cause is not Metal.
 
 ---
 
-### Phase 2 — Metal backend skeleton
+### Phase 2 — Metal skeleton (0.5 day)
 
-**Effort:** 1 day
-**KPI:** Python loads `libp40metal.dylib` and runs a trivial kernel; `p40_init` / `p40_device_count` return sane values.
+**KPI:** Python loads `libp40metal.dylib`, compiles all four kernels at startup,
+runs a trivial one, and reads the result back.
 
 ```text
 csrc/metal/
 ├── p40_metal.h
-├── p40_metal.mm
-├── pearl_types.h
-└── kernels/
-    ├── gemm_baseline.metal
-    ├── noise.metal
-    ├── noise_gemm.metal
-    ├── blake3.metal          ← omitted from the original plan; required by §2.2.5
-    ├── transcript_fold.metal
-    └── target_check.metal
-
-python/metal_capi.py
-packaging/build_macos.sh
-tests/{test_metal_backend,test_metal_gemm_bitexact,test_metal_noise_bitexact,
-       test_metal_blake3_bitexact,test_metal_pow_bitexact}.py
+├── p40_metal.mm          ← MTLCopyAllDevices()[0]; newLibraryWithSource:
+└── kernels/*.metal       ← embedded as strings at build time
+python/metal_capi.py      ← ctypes, DBuf over MTLResourceStorageModeShared
+tools/metal_probe.mm      ← already written and passing
+packaging/build_macos.sh  ← clang++ only; no metallib step
 ```
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BUILD="$ROOT/build/macos"
-mkdir -p "$BUILD"
-
-for k in gemm_baseline noise noise_gemm blake3 transcript_fold target_check; do
-  xcrun -sdk macosx metal -std=metal3.0 -O2 \
-    -c "$ROOT/csrc/metal/kernels/$k.metal" -o "$BUILD/$k.air"
-done
-
-xcrun -sdk macosx metallib "$BUILD"/*.air -o "$BUILD/pearl.metallib"
-
-clang++ -std=c++20 -O3 -dynamiclib -fobjc-arc \
-  -framework Foundation -framework Metal \
-  "$ROOT/csrc/metal/p40_metal.mm" -o "$BUILD/libp40metal.dylib"
-
-echo "Built: $BUILD/libp40metal.dylib + $BUILD/pearl.metallib"
-```
-
-Two corrections to the original build script, both of which would have produced a library that builds and then fails at runtime:
-
-1. **The metallib was compiled but never reachable.** `p40_metal.mm` must locate `pearl.metallib` at runtime via `newLibraryWithURL:`, resolved relative to the dylib's own path (`dladdr`), with an env override (`PEARL_METALLIB`) for development. Ship the two files together.
-2. **`-framework MetalPerformanceShaders` was linked but is not used.** We write our own kernels precisely because MPS gives no bit-exactness guarantee on the integer path. Dropped.
-
-`metal_capi.py` mirrors `cuda_capi.py` including its import-time `p40_init()` call and the `DBuf` wrapper (`offset`, `from_host`, `to_host`, `memset`, `free`).
+Compile **every** kernel in a startup smoke test, so shader syntax errors
+surface in one place rather than at first dispatch ([ADR-0004](docs/adr/0004-no-xcode-runtime-shader-compilation.md)).
 
 ---
 
-### Phase 3 — Correctness-first GEMM
+### Phase 3 — Kernels, each bit-exact standalone (2.5–3 days)
 
-**Effort:** 2 days
-**KPI:** zero mismatches across ≥1,000 randomized cases, on both backends.
+**KPI:** every stage matches the Python reference on ≥1,000 random cases.
 
-#### Backend A — baseline, always kept
-
-```text
-signed char inputs
-→ explicit sign extension (model on the #else branch of dp4a_pow in pearl_pow_sm61.cu)
-→ int32 multiply-accumulate
-→ threadgroup-memory tiles
-→ exact 16×16 int32 output
-```
-
-No intrinsics. No cleverness. This is the oracle for Backend B and the fallback if §3 fails.
-
-#### Backend B — Apple7 optimized, only if Phase 1a said yes
-
-```text
-fp32 simdgroup_matrix per R-chunk   (exact by §3.1 — NOT int8, NOT fp16)
-→ exact int32 conversion at the R-boundary
-→ int32 cumulative accumulate
-→ XOR-fold transcript (any reduction order — XOR is commutative, §2.2.3)
-→ packed int8 loads, double-buffered threadgroup memory
-```
-
-Before writing Backend B, confirm against the *installed* SDK headers which `simdgroup_matrix<T, R, C>` instantiations the M1 Max toolchain actually accepts. Do not assume an M2/M3 code path compiles or performs on Apple7.
-
-#### Test methodology
+Test method throughout — live differential, no fixture files:
 
 ```python
-cpu = reference_gemm(A, B)          # int32
-gpu = metal_gemm(A, B)
-assert gpu.dtype == numpy.int32
-assert numpy.array_equal(gpu, cpu)  # exact. no tolerance. ever.
+ref = miner_base_reference(...)      # the monorepo's Python, called directly
+gpu = metal_stage(...)
+assert numpy.array_equal(gpu, ref)   # exact. no tolerance. ever.
 ```
 
+Build in this order, each fully green before the next:
+
+1. **`blake3`** — against `blake3.blake3(data, key=k).digest()`. Do this first;
+   two later stages depend on it.
+2. **`noise_gen`** — against `miner_base.noise_generation`. Same seeds, dims and
+   rank must give identical bytes.
+3. **`noise_apply`** — against the reference, including clamp behaviour.
+   Instrument whether `clamp_i8` ever fires.
+4. **`pow`** — against `miner_base.noisy_gemm`.
+
+Coverage for the `pow` kernel:
+
 ```text
-[ ] Operand extremes: −127, +127, −126, +126   (int8 range — NOT ±64)
-[ ] Mixed signs, all-zero, alternating sign patterns
-[ ] Adversarial: inputs maximizing |cumulative Csum| to probe the 2²⁴ boundary
-[ ] Every R-boundary cumulative value, not just the final tile
-[ ] Random matrices, ≥1,000 cases
-[ ] Every edge tile at the 16-alignment boundary
-[ ] Non-contiguous input explicitly rejected or normalized
-[ ] Backend A vs Backend B differential — must be byte-identical
+[ ] Cumulative Csum matches at EVERY R-boundary, not just the last
+[ ] transcript[16] matches after every fold
+[ ] Operand extremes: ±127, ±126, mixed signs, all-zero, alternating
+[ ] Adversarial inputs maximising |cumulative Csum|
+[ ] Digest matches blake3.blake3(transcript_bytes, key=noise_seed_A)
+[ ] Target comparison correct (uint256, LITTLE-endian — verify the direction)
+[ ] Small sizes for stage tests; mandated sizes only in Phase 5
+```
+
+The per-R-boundary check is the one that matters most: it is the only error
+class that end-to-end testing cannot localise, and it fails silently.
+
+---
+
+### Phase 4 — Mining loop and intensity (0.5–1 day)
+
+**KPI:** runs for an hour unattended; the machine stays usable throughout.
+
+`metal_miner.py`: connect → job → generate grid → commit on host → sweep in
+throttled bursts → on hit, build proof, verify at share difficulty, submit →
+abandon the grid when a new job arrives.
+
+**Intensity is a first-class control, not a polish item.**
+
+- Mechanism: short dispatches with sleeps between them. Required anyway — macOS
+  will kill a long-running GPU kernel — so throttling is just choosing the gap.
+- `--intensity 0-100` sets the floor. After a few minutes with no keyboard or
+  mouse input, ramp to 100; drop back to the floor the instant input resumes.
+- **The dial must cover the CPU too.** The host commitment is a multi-core
+  BLAKE3 burst of a second or two per job and is not affected by GPU throttling.
+  Cap it via `RAYON_NUM_THREADS`, which `py-pearl-mining` reads. ✅ Without this,
+  "gentle mode" will not feel gentle.
+
+---
+
+### Phase 5 — First accepted share (0.5 day)
+
+**KPI:** the milestone.
+
+Run at mandated dimensions against the low-difficulty endpoint. Record the
+measured tiles/s — the first real Apple Silicon number for this algorithm, and
+worth having even though nothing gates on it.
+
+```text
+[ ] Local verify at share difficulty passes before every submission
+[ ] Pool returns result: true
+[ ] Worker visible on the dashboard
+[ ] 60 minutes unattended, no errors, machine usable
+[ ] Rejected shares < 1% excluding stale jobs
 ```
 
 ---
 
-### Phase 4 — Full pipeline port
-
-**Effort:** 2–4 days
-**KPI:** Metal produces locally valid winning proofs at reduced difficulty.
-
-**4.1 Buffers.** A `int8[M×K]`, Bᵀ `int8[N×K]`, Metal shared buffers, allocated once per job. Never re-copy per iteration.
-
-**4.2 Commitments and Merkle — stay on CPU.** `pearl_host.py` already does this. Move to GPU only if profiling proves it is the bottleneck.
-
-**4.3 Noise generation.** Port `noise_gen` / `noise_apply_A` / `noise_apply_B` / `noise_gemm` exactly per §2.3. Independent test: same key, dims, rank and seed → identical noise bytes.
-
-**4.4 BLAKE3 in Metal.** Keyed, single 64-byte block, `CHUNK_START|CHUNK_END|ROOT`. Test standalone against `blake3.blake3(transcript_bytes, key=pow_key)` before wiring it into the PoW kernel.
-
-**4.5 Fused PoW.** Per §2.1, at R granularity:
+## 6. Schedule
 
 ```text
-load A/Bᵀ R-chunk → GEMM → int32 cumulative → XOR-reduce 256 → rotl32/XOR into
-transcript[t%16] → after final t: keyed BLAKE3 → compare to target → discard tile
+Phase 0   Rust, py-pearl-mining, upstream import, wallet        2-3 hours
+Phase 1   Prove the pool pipeline with pm.mine                  0.5 day
+Phase 2   Metal skeleton                                        0.5 day
+Phase 3   blake3 → noise_gen → noise_apply → pow, each exact    2.5-3 days
+Phase 4   Mining loop, intensity dial, auto-idle                0.5-1 day
+Phase 5   First accepted share                                  0.5 day
+--------------------------------------------------------------------------
+                                                                5-6 days
 ```
 
-The GPU returns only `found`, `coord`, and optionally `digests`. Never an output matrix.
-
-**4.6 Proof construction.** On `found`: Python extracts winning rows/cols → `pearl_host` builds the Merkle proof → `pearl_mining` verifies locally → pool client submits. Verify locally **before** every submission, always.
+Down from 7–12, because Backend B, the optimisation phase, the tensor_hash port,
+the Philox port, the fixture apparatus and the Xcode install are all gone.
 
 ---
 
-### Phase 5 — Pool integration
-
-**Effort:** 0.5–1 day
-**KPI:** first `ACCEPTED` share.
-
-Route 1: reuse `luckypool_miner.py` unchanged, inject the Metal backend, submit through existing code. Only if that breaks, implement the documented V1 protocol (`mining.authorize` / `mining.notify` / `mining.submit`; job carries `job_id`, 76-byte hex `header`, 32-byte big-endian `target`, `height`, `difficulty`; submission carries job ID + base64 `PlainProof`).
-
-Note the endianness asymmetry and do not let it drift: the Stratum **target** is documented big-endian, while the PoW **digest comparison** is little-endian (§2.1). Confirm both directions against the oracle in Phase 1.
-
-```text
-1. Connect                        6. Build PlainProof
-2. Authorize wallet.worker        7. Verify locally  ← never skip
-3. Receive mining.notify          8. Submit
-4. Parse exact 76-byte header     9. result: true
-5. Mine to advertised target     10. Worker visible on pool dashboard
-```
-
----
-
-### Phase 6 — Optimize
-
-**Effort:** 2–5 days
-**KPI:** stable, correct, sustained throughput.
-
-| Gate | Target |
-| ---- | -----: |
-| Correctness | 0 mismatches |
-| Local proof validity | 20/20 |
-| Backend A vs B differential | byte-identical |
-| Pool result | ≥1 accepted share |
-| Stability | 60 min unattended, no error |
-| Rejected shares | <1%, excluding stale jobs |
-| Throughput — *measured baseline* | record M1 Max Backend A number first |
-| Throughput — stretch | ≥21,693 tiles/s (published M2 Metal figure) |
-
-**On the throughput numbers.** The original plan made "≥21,693 tiles/s" an *initial* gate. That is wrong twice over: it demands a first working kernel match someone's tuned result, and it compares against an unknown implementation. Your 32 GPU cores against a base M2's 10 gives real headroom, but headroom is not a guarantee — especially if Backend B rides the fp32 simdgroup rate rather than a native int8 rate that Apple does not expose. **Measure your own Backend A number, publish it in this repo, then optimize against yourself.** The M2 figure is a reference point, not an acceptance criterion. Correctness gates are hard; throughput gates are informational.
-
-**Optimization order** (never trade correctness for any of these):
-
-```text
-1. Eliminate CPU↔GPU copies        6. Move target comparison onto GPU
-2. Batch command-buffer dispatches 7. Proof building on a background CPU thread
-3. Double-buffer work              8. Autotune threadgroup + staging
-4. Fuse noise + GEMM               9. --intensity flag for thermal control
-5. Fuse GEMM + transcript fold
-```
-
-Constraint on step 8: autotune threadgroup shape and staging freely; **never** move the R-boundary fold points (§2.2.2).
-
----
-
-## 6. Risks
+## 7. Risks
 
 | Risk | Severity | Mitigation |
 | ---- | -------: | ---------- |
-| One integer mismatch invalidates every share | Critical | CPU oracle; per-R-boundary fixtures; ≥1,000 bit-exact cases; permanent A-vs-B differential |
-| fp32 exactness fails for the job's real R | Critical | **Settled in Phase 1a, before any kernel work.** Backend A is the unconditional fallback |
-| `simdgroup_matrix` has no int type | Certain, handled | Known ahead of time. fp32-per-R-chunk design (§3.3); Backend A never deleted |
-| Reduction-order or endianness drift | High | XOR order is provably free (§2.2.3); endianness pinned in Phase 1 and re-checked in Phase 5 |
-| GPU BLAKE3 diverges from reference | High | Standalone bit-exact test in 4.4 before integration |
-| 1 GiB proof snapshot stalls a fast GPU | High | Shared buffers, background proof builder, double buffering. Upstream warns about this — it is architecture, not polish |
-| Job changes mid-proof-construction | Medium | Job IDs, cancellation tokens, stale-proof rejection |
-| Thermal throttling on a laptop | Medium | `--intensity`; report sustained not peak numbers |
-| Upstream protocol change | Medium | Both upstream commits pinned in Phase 0 |
-| Xcode 15.x ceiling on macOS 14.4.1 | Low | Accepted; Metal 3 is sufficient. Revisit only if a needed feature is 16-only |
-| Umbrel architecture mismatch | Low initially | Umbrel is out of scope until after the first accepted share |
-
----
-
-## 7. Schedule
-
-```text
-Day 1     Toolchain (Xcode, Rust, maturin, py-pearl-mining from source), fork, pins
-Day 2     Phase 1a exactness decision → CPU oracle → per-R-boundary fixtures
-Day 3     Metal skeleton, dylib loads, metallib resolution, trivial kernel
-Day 4     Backend A baseline GEMM, bit-exact vs CPU
-Day 5     Noise, transcript fold, GPU BLAKE3 — each bit-exact standalone
-Day 6–7   Fused reduced-difficulty mining loop, local PlainProof verification
-Day 8     Pool integration, first accepted-share attempt
-Day 9–12  Backend B (if Phase 1a permits), dispatch/memory tuning, stability
---------  first accepted share is the milestone; everything below is V2 -------
-Later     pearld/gateway on Umbrel, solo or P2Pearl, long-running packaging
-```
-
-**7–12 focused engineering days**, revised up from the original 5–10. The added days are Phase 0 (Xcode download plus a from-source Rust build that the original assumed was one `pip install`) and the GPU BLAKE3 port the original omitted. This still assumes the Python miner is reusable as-is and that no consensus arithmetic edge case appears.
+| One integer mismatch invalidates every share | Critical | Live differential per stage; per-R-boundary checks; ≥1,000 cases |
+| Backend A too slow for shares to arrive | Medium ⚠️ | Estimated ~1 TH/s, **not measured**. Phase 1 records the real share difficulty; if the gap is hopeless, that is known on day one |
+| Share difficulty higher than expected | Medium ⚠️ | Settled in Phase 1, before any Metal work |
+| GPU BLAKE3 diverges from reference | High | Standalone test first, before two dependent stages |
+| Reduction-order or endianness drift | Medium | XOR order is provably free (§2.2.3); endianness pinned in Phase 1 and rechecked in Phase 5 |
+| Local verify gives false confidence | High | Always pass `nbits_override`; without it the check is theatre (§0.2) |
+| Host commitment stalls a fast GPU | Medium | Overlap with the previous grid's sweep; revisit only if measured |
+| Job changes mid-proof | Medium | Job IDs, abandon grid on new job, stale-proof rejection |
+| Thermal throttling / unusable laptop | Medium | Intensity dial covering GPU **and** CPU; report sustained, not peak |
+| Repo accidentally made public with the fee removed | Low, severe | [ADR-0003](docs/adr/0003-private-repo-and-no-dev-fee.md) records the tripwire |
+| Upstream protocol change | Low | Both upstream commits pinned in Phase 0 |
 
 ---
 
 ## 8. Open questions
 
-Tracked explicitly rather than assumed away.
-
-1. **What is the job's real R?** ⚠️ The paper reports R = 128; the C API takes it as a runtime parameter. Phase 1a reads the real value. The whole Backend B decision hangs on it.
-2. **Which `simdgroup_matrix` instantiations does the M1 Max toolchain actually accept?** ⚠️ Unanswerable until Xcode is installed. Check the SDK headers in Phase 2, not from documentation.
-3. **What hardware runs your Umbrel?** Raspberry Pi / Umbrel Home / Intel-AMD mini-PC / other. Blocks V2 planning only.
-4. **Does `clamp_i8` ever actually fire in practice?** ⚠️ The upstream comment implies it cannot. If it does, the noise model needs re-reading before trusting any bound.
-5. **Is the reduced-difficulty path exercised the same way the pool path is?** Confirm the Phase 1 oracle and the Phase 5 pool path share one code path, so 20/20 local validity means something at production difficulty.
+1. **How fast is Backend A really?** ⚠️ Estimated ~1 TH/s from hardware
+   characteristics. Measured in Phase 5.
+2. **What is LuckyPool's share difficulty on the low-difficulty endpoint?** ⚠️
+   Answered in Phase 1.
+3. **Does `pool_common`'s Stratum dialect still match the live pool?** ⚠️
+   Upstream last changed 2026-07-05. Answered in Phase 1.
+4. **Does the desktop wallet require a heavy chain sync?** ⚠️ Phase 0.
+5. **Does `clamp_i8` ever fire?** ⚠️ The upstream comment implies it cannot.
+   Instrumented in Phase 3. If it fires, re-read the noise model before trusting
+   any bound.
 
 ---
 
 ## 9. Bottom line
 
-Fork `Open-Pearl-Miner`. Keep its host, proof and pool layers untouched. Replace `cuda_capi` with a bit-exact `metal_capi` that mirrors the real `p40_*` C API.
+Import upstream. Keep `pool_common` and `pearl_host` untouched. Write four Metal
+kernels and a small miner around them.
 
-Port from the **sm61** path, not the Ampere path. Accumulate **fp32 per R-chunk, int32 cumulatively** — a design the PoW's own transcript structure hands you for free. Fold the transcript at **every** R-boundary from the **cumulative** sum. Never materialize an output matrix. Verify every proof locally before submitting.
+Accumulate in **int32** — proven exact on this GPU, not merely argued. Fold the
+transcript at **every** R-boundary from the **cumulative** sum. Commit on the
+host. Never materialise an output matrix. Verify at **share** difficulty before
+every submission.
 
-Settle the Phase 1a exactness question before writing a single kernel. Everything else is downstream of that answer.
+Prove the pool pipeline with `pm.mine` before writing any Metal. Everything
+downstream depends on that working, and none of it is your code.
