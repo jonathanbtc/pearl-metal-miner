@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues on **`jonathanbtc/perle-minig`**. Use the `gh` CLI for all operations.
+Issues and PRDs for this repo live as GitHub issues on **`jonathanbtc/pearl-metal-miner`**. Use the `gh` CLI for all operations.
 
 ## Conventions
 

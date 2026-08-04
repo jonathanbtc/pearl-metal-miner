@@ -12,10 +12,24 @@ with `clang++` from the Command Line Tools alone and compiles and runs a kernel.
 
 So: no `.metallib` build step, no `xcrun metal`, no Xcode. Shader source is
 embedded in the host library and compiled at process start. This costs about a
-second of startup and is invisible against a mining run. Because the project
-stays private and personal ([[0003-private-repo-and-no-dev-fee]]) there is no
-distribution scenario where a precompiled shader library would have earned its
-keep.
+second of startup and is invisible against a mining run.
+
+> **Amended 2026-08-04.** The original reasoning for skipping a precompiled
+> shader library was that a private, personal project has no distribution
+> scenario ([[0003-private-repo-and-no-dev-fee]]). That premise is gone — the
+> project is published under
+> [[0005-public-apache-2-built-from-isc-upstream]] — but the decision is
+> **strengthened, not weakened**, and for a better reason than the original one.
+>
+> Runtime compilation is now load-bearing. Tile dimensions, rank and the pattern
+> may be dictated by the pool, so nothing about the job's shape can be hardcoded
+> ([[0006-built-for-other-people-to-run]]). Compiling at process start lets
+> those arrive as Metal **function constants**, which the shader compiler folds
+> into the generated code exactly as if they had been literals — portability at
+> no cost in the hottest loop in the project. A precompiled `.metallib` could
+> not do this. It also means a distributed build needs no toolchain on the
+> user's machine beyond what macOS already ships, which is precisely what a
+> miner other people run wants.
 
 Phase 0 accordingly shrinks to installing Rust, which is still genuinely
 required: `py-pearl-mining` provides both the Merkle commitment this design
@@ -28,9 +42,13 @@ Shader syntax errors surface at runtime rather than build time. Mitigate by
 compiling every kernel in a startup smoke test, so failures appear immediately
 and in one place rather than at first dispatch.
 
-Without Xcode there is no GPU debugger and no Metal System Trace. Acceptable
-while there is no optimisation phase ([[0002-backend-a-only]]); if a kernel ever
-becomes mysteriously slow or wrong, installing Xcode 15.4 is the escape hatch.
+Without Xcode there is no GPU debugger and no Metal System Trace. That was
+comfortable when optimisation was ruled out entirely; under the amended
+[[0002-backend-a-only]] optimisation is authorised if a measured bar is missed,
+and profiling blind is a poor way to spend that time. Installing Xcode 15.4
+remains the escape hatch, and it becomes the *expected* move if the bar is
+missed rather than a last resort. Nothing about the shipped artifact changes —
+the build still requires only the Command Line Tools.
 
 ## Hardware facts established by the same probe
 

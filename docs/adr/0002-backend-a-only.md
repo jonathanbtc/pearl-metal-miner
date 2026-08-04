@@ -1,9 +1,13 @@
-# Backend A only — no `simdgroup_matrix`, no optimisation phase
+# Backend A only — no `simdgroup_matrix`, and optimisation only against a bar
+
+> **Amended 2026-08-04** by [[0006-built-for-other-people-to-run]]. This ADR
+> originally bundled two decisions — *no Backend B* and *no optimisation phase*
+> — under one economic argument. That argument survives for the first and not
+> the second. See **The amendment** below. Everything else stands.
 
 `Plan.md` specified two PoW kernels: Backend A (plain int32 arithmetic, exact by
 construction) and Backend B (Apple's `simdgroup_matrix` fp32 hardware, exact
-only if a numeric bound holds). We are building Backend A and nothing else, and
-we are not running an optimisation phase.
+only if a numeric bound holds). We are building Backend A and nothing else.
 
 The reason is economic, and it was measured rather than assumed. On 2026-08-02
 PRL was $0.26 with a 28.54 EH/s network, paying $0.00829 per TH/s per day.
@@ -22,12 +26,35 @@ silently produce rejected shares.
 The goal is therefore **one accepted share from a real pool**, by the most
 boring correct route available.
 
+## The amendment
+
+**"No Backend B" survives untouched.** Its argument is about exactness, not
+money, and does not care whether the coin is worth $0.26 or $2,600.
+
+**"No optimisation phase" does not survive.** Its whole argument was *"speed is
+worth nothing here"*, which was true when the audience was one person. Two
+things changed it under [[0006-built-for-other-people-to-run]]:
+
+1. **Speed gates the milestone.** The lowest difficulty LuckyPool advertises is
+   2,000,000, and Backend A's ~1 TH/s is an estimate, not a measurement. If the
+   kernel is too slow no share ever arrives, and the plan cannot reach its own
+   definition of done. That is not a profit question.
+2. **Speed is the product.** A stranger's M2 Air is considerably slower than
+   this M1 Max. "We chose not to optimise because it wasn't worth money to the
+   author" is not a sentence that belongs in a public README.
+
+So optimisation is neither forbidden nor open-ended. It is **conditional on a
+measured bar**: the Phase 1 pool survey yields the real share difficulty, which
+yields a required tiles/s for a share in reasonable time. Miss the bar and
+Backend A gets optimised — tiling, memory layout, occupancy, all within int32
+exactness. Clear the bar and the work stops there. The bar is written down
+before the measurement, not after, so it cannot be quietly moved.
+
 ## Consequences
 
-Backend A must still be fast enough that a share arrives in reasonable time. A
-rough estimate puts it near 1 TH/s, which against a low-difficulty pool
-endpoint should be ample — but it is an estimate, and it is the first thing to
-check against a live job rather than to assume.
+Backend A must be fast enough that a share arrives in reasonable time, and
+"fast enough" is now a number derived in Phase 1 rather than a hope. Phase 5
+measures against it.
 
 Backend B stays defined in [[../../CONTEXT.md]] so the term keeps its meaning.
 If it is ever revisited, the fp32 exactness bound must be re-derived at the R

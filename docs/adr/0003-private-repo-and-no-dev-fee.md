@@ -1,5 +1,13 @@
 # This repo stays private, and the developer fee is removed
 
+> **Status: superseded by [[0005-public-apache-2-built-from-isc-upstream]]
+> (2026-08-04).** Its premise was that this project needed
+> `Muskwak/Open-Pearl-Miner`. It did not: `pearl-research-labs/pearl` is ISC and
+> supplies everything load-bearing. There is no fee to remove, no exemption to
+> rely on, and no requirement that the repo stay private. **Nothing below is
+> operative.** It is kept because a deleted decision teaches nobody why it was
+> made, and because the bar it placed on Muskwak survives in a stricter form.
+
 Upstream `Muskwak/Open-Pearl-Miner` ships under a custom licence (not MIT,
 despite resembling it) whose clause 2 mandates a 2% developer fee and forbids
 removing it in anything distributed. Clauses 3 and 4 carve out an exemption:

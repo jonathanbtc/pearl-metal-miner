@@ -1,19 +1,29 @@
 # Pearl Metal Miner
 
 A bit-exact Apple Metal compute backend for the Pearl (PRL) proof-of-useful-work
-miner, replacing the CUDA backend of `Muskwak/Open-Pearl-Miner` on an M1 Max.
+miner, built from the ISC-licensed `pearl-research-labs/pearl` upstream and
+targeting pool mining on Apple Silicon. See
+[[docs/adr/0005-public-apache-2-built-from-isc-upstream]] and
+[[docs/adr/0006-built-for-other-people-to-run]].
 
 This glossary exists because the domain has several near-synonyms that are not
 synonyms, and confusing them has already produced one wrong design (see
-[[../docs/adr/0002-backend-a-only]] and §0.2 of `Plan.md`).
+[[docs/adr/0002-backend-a-only]] and §0.2 of `Plan.md`).
+
+**This file defines terms, not values.** Every concrete number — dimensions,
+rank, tile size, ranges — lives in `Plan.md`, where it carries a ✅/⚠️/❌ marker
+and a source. A bare constant in a glossary is an assertion with no evidence
+attached, and that is exactly how one unverified number came to be stated as
+settled fact in two documents while a third source contradicted it.
 
 ## Language
 
 ### The work the pool gives us
 
 **Job**:
-What the pool sends over Stratum. It fixes only two things: the *job key* and
-the *target*. It does not supply any matrices.
+What the pool sends over Stratum. It fixes the *job key* and the *target*, and
+depending on the pool's **dialect** it may also dictate the dimensions, the
+**noise rank** and the **pattern**. It never supplies any matrices.
 _Avoid_: work unit, task
 
 **Job key**:
@@ -23,9 +33,18 @@ _Avoid_: key (ambiguous — see **pow key**)
 
 **Target**:
 The threshold a digest must fall below to be a winning tile. The pool's
-advertised target is scaled by a fixed factor before use as the digest bound.
+advertised target is scaled before use as the digest bound, by a factor derived
+from the **hash tile** dimensions and the k-dimension.
 _Avoid_: difficulty (difficulty is the pool's presentation of the target, not
 the value the kernel compares against)
+
+**Dialect**:
+One pool's variant of the Stratum wire format — its handshake, its
+`mining.notify` shape, its `mining.submit` framing, and how it normalises
+difficulty and target. Pools genuinely differ, including in whether the miner or
+the pool chooses the mining parameters, so the dialect is a seam in our design
+rather than an implementation detail.
+_Avoid_: protocol (there is only one Stratum; the dialects are variants of it)
 
 **Share**:
 A winning tile packaged as a proof and submitted to the pool. Pools pay
@@ -42,7 +61,7 @@ _Avoid_: nonce, attempt, round
 
 **Committed matrix**:
 A (m × k) or B (k × n), int8, whose Merkle root the miner commits to before
-mining. Element range is roughly ±63.
+mining. Its element range is *narrower* than the full int8 range.
 _Avoid_: operand, input matrix — those mean the noised versions, which have a
 different range
 
@@ -53,26 +72,34 @@ source of the noise seeds, so a grid cannot be mined before it is committed.
 **Noised operand**:
 `ApEA` or `BpEB` — a committed matrix with its noise added and clamped back to
 int8. **These, not the committed matrices, are what the PoW GEMM multiplies**,
-and their range is roughly ±127.
+and they span the full int8 range.
 _Avoid_: A, B, operand, input — all ambiguous with **committed matrix**
 
 **Noise rank (R)**:
 The width of the low-rank noise, and therefore the granularity at which the
-k-dimension is tiled and the transcript is folded. A client-side constant
-(currently 256), not a field in the job.
+k-dimension is tiled and the transcript is folded. It must match consensus, and
+some pools dictate it on the wire — so it is a value to **read and validate**,
+never one to assume.
 _Avoid_: rank alone, tile width
 
 ### The proof-of-work itself
 
 **Hash tile**:
-A 16 × 16 block of the output. One hash tile is one lottery ticket: it is
-folded into its own transcript, hashed, and compared to the target
-independently of every other tile.
+The unit of the lottery. One hash tile is folded into its own transcript,
+hashed, and compared to the target independently of every other tile. Its
+dimensions come from the job, and it is selected by a **pattern** rather than
+being necessarily a contiguous block of the output.
 _Avoid_: tile alone (ambiguous with the k-tiling at R), block, output tile
 
+**Pattern**:
+The row and column index lists that select which elements of the output form one
+**hash tile**. Supplied by the miner or dictated by the pool depending on the
+**dialect**.
+_Avoid_: mask, selection, indices
+
 **Region**:
-A square group of hash tiles dispatched to the GPU as one unit of search.
-Purely a scheduling unit — it has no consensus meaning.
+A group of hash tiles dispatched to the GPU as one unit of search. Purely a
+scheduling unit — it has no consensus meaning.
 
 **R-boundary**:
 A fold point in the k-loop, every R columns. The transcript is folded at every
@@ -86,8 +113,8 @@ from a per-chunk value — this is the constraint the whole port is built around
 _Avoid_: partial sum, accumulator (both read as per-chunk)
 
 **Transcript**:
-16 uint32 per hash tile, rotated and XOR-folded at each R-boundary, and hashed
-at the end to produce the tile's digest.
+A fixed-length array of uint32 per hash tile, rotated and XOR-folded at each
+R-boundary, and hashed at the end to produce the tile's digest.
 
 **Pow key**:
 The key for a tile's final keyed BLAKE3. It is `noise_seed_A`, which equals the
@@ -105,7 +132,7 @@ silently.
 **Backend A**:
 The Metal PoW kernel that does the contraction in plain int32 arithmetic. Exact
 by construction, and the only backend in scope.
-See [[../docs/adr/0002-backend-a-only]].
+See [[docs/adr/0002-backend-a-only]].
 
 **Backend B**:
 A hypothetical Metal PoW kernel using `simdgroup_matrix` fp32 hardware for
@@ -117,6 +144,13 @@ The Python reference in the Pearl monorepo (`miner-base`) that our kernels are
 checked against. It defines correctness; where our output and the oracle's
 disagree, we are wrong.
 
+**Self-test**:
+A user-facing command that runs the live differential against the **oracle** on
+the machine it is invoked on. It exists because we can verify one Mac and other
+people run others, and because a wrong kernel fails silently.
+See [[docs/adr/0006-built-for-other-people-to-run]].
+
 **Intensity**:
-How much of the GPU's time the miner is allowed to take. A first-class,
-user-facing control, because this machine has to stay usable while it mines.
+How much of the machine's time the miner is allowed to take, across GPU and CPU
+both. A first-class, user-facing control, because this machine has to stay
+usable while it mines.

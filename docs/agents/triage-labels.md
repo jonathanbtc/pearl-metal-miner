@@ -16,14 +16,13 @@ Edit the right-hand column to match whatever vocabulary you actually use.
 
 ## Note for this repo
 
-These labels do not yet exist in `jonathanbtc/perle-minig` — the tracker is empty. `gh issue edit --add-label` fails on a label that doesn't exist, so create each one the first time it's needed:
+As of 2026-08-04, `ready-for-agent`, `ready-for-human` and `wontfix` **exist** in
+`jonathanbtc/pearl-metal-miner`. `needs-triage` and `needs-info` **do not**.
+
+`gh issue edit --add-label` fails on a label that doesn't exist, so create either
+of the missing two the first time it's needed:
 
 ```bash
-gh label create needs-triage    --description "Maintainer needs to evaluate this issue"
-gh label create needs-info      --description "Waiting on reporter for more information"
-gh label create ready-for-agent --description "Fully specified, ready for an AFK agent"
-gh label create ready-for-human --description "Requires human implementation"
-gh label create wontfix         --description "Will not be actioned"
+gh label create needs-triage --description "Maintainer needs to evaluate this issue"
+gh label create needs-info   --description "Waiting on reporter for more information"
 ```
-
-(`wontfix` ships as a GitHub default on many repos — `gh label create` will error if it's already there, which is harmless.)
