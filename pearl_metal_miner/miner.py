@@ -50,6 +50,21 @@ def log(*a):
     print(f"[{time.strftime('%H:%M:%S')}]", *a, flush=True)
 
 
+def hid_idle_seconds() -> float:
+    """System idle time via IOKit (no dependencies). Returns 0 on failure so
+    auto-intensity fails toward the polite floor, never toward full burn."""
+    import subprocess
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"],
+                             capture_output=True, text=True, timeout=5).stdout
+        for line in out.splitlines():
+            if "HIDIdleTime" in line:
+                return int(line.split("=")[-1].strip()) / 1e9
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
 class Engine:
     """Owns the Metal context and the persistent buffers for one job shape."""
 
@@ -155,15 +170,17 @@ class GridFactory(threading.Thread):
     def request(self, job):
         self.requests.put(job)
 
-    def take(self, job, timeout: float):
-        """A grid for `job`, from the pipeline if it matches, else built inline."""
-        try:
-            while True:
-                job_id, grid = self.ready.get(timeout=timeout)
-                if job_id == job.job_id:
-                    return grid
-        except queue.Empty:
-            return Grid(self.shape, self.m_dim, self.n_dim, job.header_bytes, self.rng)
+    def take(self, job):
+        """A ready grid for `job` if the pipeline has one, else build inline.
+        Never blocks: a stale or missing grid is cheaper to rebuild than to
+        wait for, and the GPU must not stall on the host."""
+        while True:
+            try:
+                job_id, grid = self.ready.get_nowait()
+            except queue.Empty:
+                return Grid(self.shape, self.m_dim, self.n_dim, job.header_bytes, self.rng)
+            if job_id == job.job_id:
+                return grid  # discard grids for superseded jobs
 
     def run(self):
         while True:
@@ -193,6 +210,10 @@ def run(argv=None) -> int:
     ap.add_argument("--intensity", type=int, default=100,
                     help="1-100: GPU duty cycle floor; CPU is capped separately "
                          "via --cpu-threads")
+    ap.add_argument("--auto-intensity", action="store_true",
+                    help="treat --intensity as the floor while you use the "
+                         "machine; ramp to 100 after 5 idle minutes and drop "
+                         "back the moment input resumes")
     ap.add_argument("--cpu-threads", type=int, default=4,
                     help="host commitment thread cap (RAYON_NUM_THREADS)")
     ap.add_argument("--region-rows", type=int, default=256,
@@ -274,6 +295,7 @@ def run(argv=None) -> int:
             log("connection died before first job")
             return 1
         handle_events(block_s=1.0)
+    factory.request(job)  # prime the pipeline so the first grid is ready
 
     while True:
         if conn.dead.is_set():
@@ -300,8 +322,8 @@ def run(argv=None) -> int:
                 continue
             bound_bytes = bound_int.to_bytes(32, "little")
             t0 = time.time()
-            grid = factory.take(job, timeout=0.001 if new_job else 30.0)
-            factory.request(job)  # start the next one immediately
+            grid = factory.take(job)
+            factory.request(job)  # keep one grid building ahead of the sweep
             engine.load_grid(grid)
             stats["grids"] += 1
             row_cursor = 0
@@ -336,8 +358,14 @@ def run(argv=None) -> int:
         if row_cursor >= n_regions:
             grid = None  # grid exhausted; next iteration builds a fresh one
 
-        if args.intensity < 100:
-            time.sleep(t_burst * (100 - args.intensity) / max(args.intensity, 1))
+        intensity = args.intensity
+        if args.auto_intensity and time.time() - stats.get("last_idle_poll", 0) > 10:
+            stats["last_idle_poll"] = time.time()
+            stats["idle_full"] = hid_idle_seconds() > 300
+        if args.auto_intensity and stats.get("idle_full"):
+            intensity = 100
+        if intensity < 100:
+            time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
 
         if time.time() - stats["last_report"] > 30:
             dt = time.time() - stats["t0"]
