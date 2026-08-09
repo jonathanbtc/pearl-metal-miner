@@ -310,3 +310,127 @@ kernel void pow_sweep(device const char *an [[buffer(0)]],
     }
   }
 }
+
+// ── pow_sweep_v2: blocked fast path ─────────────────────────────────────────
+// Requirements (host-enforced): rows_pattern == [0, S] (FC_ROW_S0 = S,
+// FC_ROW_L0 = 2, upper levels trivial), cols_pattern == [0..63] (FC_COL_S0 = 1,
+// FC_COL_L0 = 64). One threadgroup sweeps a 2S×64 output block = S hash tiles
+// sharing one staged copy of the operands; each thread owns a 2×8 sub-tile of
+// exactly one hash tile. Bit-exactness is unchanged — same cumulative int32,
+// same fold, same digest; only the work decomposition differs.
+
+kernel void pow_sweep_v2(device const char *an [[buffer(0)]],
+                         device const char *bnt [[buffer(1)]],
+                         device const uint *params2 [[buffer(2)]], // band_lo, n_col_bases
+                         device const uint *a_seed [[buffer(4)]],
+                         device const uchar *bound [[buffer(5)]],
+                         device atomic_uint *hits [[buffer(6)]],
+                         constant PowParams &P [[buffer(7)]],
+                         device uchar *digests_out [[buffer(8)]],
+                         uint2 tgid [[threadgroup_position_in_grid]],
+                         uint tid [[thread_index_in_threadgroup]]) {
+  const uint S = FC_ROW_S0;          // 32: bases per band; tile rows {o, o+S}
+  const uint W = FC_COL_L0;          // 64: contiguous cols per tile
+  const uint band = params2[0] + tgid.y;
+  const uint base_c = tgid.x * W;
+  const uint row0 = band * 2 * S;    // first row of this band
+  const uint nchunks = FC_K / FC_R;
+
+  threadgroup uchar As[2 * 32 * 128];     // 2S × R  (S=32, R≤128 fast path)
+  threadgroup uchar Bs[64 * 128];         // W × R
+  threadgroup uint tr[32 * 16];           // S transcripts
+
+  const uint o = tid / 8;            // this thread's tile (row base offset)
+  const uint j0 = (tid % 8) * 8;     // first of its 8 columns
+
+  for (uint i = tid; i < S * 16u; i += S * 8u) tr[i] = 0u;
+
+  int acc[2][8];
+  for (int a = 0; a < 2; a++)
+    for (int b = 0; b < 8; b++) acc[a][b] = 0;
+
+  const uint nthreads = S * 8u;      // 256
+  for (uint t = 0; t < nchunks; t++) {
+    const uint klo = t * FC_R;
+    // Cooperative stage as u32 words (K and R are multiples of 4).
+    device const uint *an32 = (device const uint *)an;
+    device const uint *bnt32 = (device const uint *)bnt;
+    threadgroup uint *As32 = (threadgroup uint *)As;
+    threadgroup uint *Bs32 = (threadgroup uint *)Bs;
+    const uint awords = 2 * S * FC_R / 4;
+    for (uint i = tid; i < awords; i += nthreads) {
+      uint rr = i / (FC_R / 4), lw = i % (FC_R / 4);
+      As32[i] = an32[(ulong)(row0 + rr) * (FC_K / 4) + klo / 4 + lw];
+    }
+    const uint bwords = W * FC_R / 4;
+    for (uint i = tid; i < bwords; i += nthreads) {
+      uint cc = i / (FC_R / 4), lw = i % (FC_R / 4);
+      Bs32[i] = bnt32[(ulong)(base_c + cc) * (FC_K / 4) + klo / 4 + lw];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    threadgroup const char4 *a0 = (threadgroup const char4 *)(As + o * FC_R);
+    threadgroup const char4 *a1 = (threadgroup const char4 *)(As + (o + S) * FC_R);
+    for (uint l4 = 0; l4 < FC_R / 4; l4++) {
+      char4 av0 = a0[l4];
+      char4 av1 = a1[l4];
+      for (uint b = 0; b < 8; b++) {
+        char4 bv = ((threadgroup const char4 *)(Bs + (j0 + b) * FC_R))[l4];
+        acc[0][b] += (int)av0.x * (int)bv.x + (int)av0.y * (int)bv.y +
+                     (int)av0.z * (int)bv.z + (int)av0.w * (int)bv.w;
+        acc[1][b] += (int)av1.x * (int)bv.x + (int)av1.y * (int)bv.y +
+                     (int)av1.z * (int)bv.z + (int)av1.w * (int)bv.w;
+      }
+    }
+
+    uint my = 0u;
+    for (int a = 0; a < 2; a++)
+      for (int b = 0; b < 8; b++) my ^= as_type<uint>(acc[a][b]);
+    // 8 threads per tile, consecutive lanes: butterfly XOR within the team.
+    my ^= simd_shuffle_xor(my, 4u);
+    my ^= simd_shuffle_xor(my, 2u);
+    my ^= simd_shuffle_xor(my, 1u);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if ((tid & 7u) == 0u) {
+      uint slot = t % 16u;
+      uint prev = tr[o * 16u + slot];
+      tr[o * 16u + slot] = ((prev << 13u) | (prev >> 19u)) ^ my;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
+  if (tid >= S) return;
+  uint msg[16], key[8], d[8];
+  for (int i = 0; i < 16; i++) msg[i] = tr[tid * 16 + i];
+  for (int i = 0; i < 8; i++) key[i] = a_seed[i];
+  blake3_64_keyed(msg, key, d);
+
+  const uint base_r = row0 + tid;
+  if (P.flags & 1u) {
+    const uint tile_idx = (band * S + tid) * P.n_col_bases + tgid.x;
+    device uchar *dst = digests_out + (ulong)tile_idx * 32u;
+    for (int i = 0; i < 8; i++) {
+      uint w = d[i];
+      dst[i * 4 + 0] = w & 0xFFu;
+      dst[i * 4 + 1] = (w >> 8) & 0xFFu;
+      dst[i * 4 + 2] = (w >> 16) & 0xFFu;
+      dst[i * 4 + 3] = (w >> 24) & 0xFFu;
+    }
+  }
+  bool win = true;
+  for (int i = 31; i >= 0; i--) {
+    uchar hb = (d[i / 4] >> (8 * (i % 4))) & 0xFFu;
+    uchar bb = bound[i];
+    if (hb != bb) {
+      win = hb < bb;
+      break;
+    }
+  }
+  if (win) {
+    uint idx = atomic_fetch_add_explicit(&hits[0], 1u, memory_order_relaxed);
+    if (idx < P.hits_cap) {
+      atomic_store_explicit(&hits[1 + 2 * idx], base_r, memory_order_relaxed);
+      atomic_store_explicit(&hits[2 + 2 * idx], base_c, memory_order_relaxed);
+    }
+  }
+}

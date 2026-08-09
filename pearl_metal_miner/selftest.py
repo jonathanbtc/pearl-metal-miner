@@ -217,6 +217,43 @@ def test_pow(m: Metal, shape_row, rng: np.random.Generator):
         b.release()
 
 
+def test_pow_v2(m: Metal, rng: np.random.Generator):
+    """The blocked kernel must produce byte-identical digests to the general
+    kernel's reference across every tile, plus identical hit sets."""
+    k, r = 1024, 128
+    m_dim, n_dim = 256, 256
+    job = JobShape(k=k, r=r,
+                   rows_pattern=ref.Pattern.from_list([0, 32]),
+                   cols_pattern=ref.Pattern.from_list(list(range(64))))
+    m.compile(job)
+    a_seed = rng.bytes(32)
+    for name, gen in {
+        "random": lambda size: rng.integers(-127, 128, size=size, dtype=np.int64),
+        "±127 alternating": lambda size: np.where(
+            (np.arange(size[1]) % 2 == 0)[None, :], 127, -127
+        ) * np.ones((size[0], 1), dtype=np.int64),
+    }.items():
+        an = gen((m_dim, k)).astype(np.int8)
+        bnt = gen((n_dim, k)).astype(np.int8)
+        anb, bntb = m.from_numpy(an), m.from_numpy(bnt)
+        n_bands, n_cb = m_dim // 64, n_dim // 64
+        n_tiles = n_bands * 32 * n_cb
+        hits = m.alloc(4 + 8 * 4096)
+        hits.array(np.uint32, (1,))[0] = 0
+        dig = m.alloc(n_tiles * 32)
+        m.pow_sweep2(anb, bntb, 0, n_bands, n_cb, a_seed, b"\xff" * 32, hits, 4096, dig)
+        gpu = dig.array(np.uint8, (n_bands * 32, n_cb, 32)).copy()
+        _, _, want = _reference_digests(an.astype(np.int32), bnt.astype(np.int32),
+                                        job, m_dim, n_dim, a_seed)
+        _check(f"pow_v2[2×64 blocked] digests, {n_tiles} tiles, {name}",
+               np.array_equal(gpu, want))
+        count = int(hits.array(np.uint32, (1,))[0])
+        _check(f"pow_v2 …hit count at ≤0xFF…FF bound ({count}/{n_tiles})",
+               count == n_tiles)
+        for b in (anb, bntb, hits, dig):
+            b.release()
+
+
 def test_end_to_end(m: Metal, rng: np.random.Generator):
     """Full pipeline with GPU noise + GPU sweep; the win is crafted into a
     PlainProof and judged by upstream's Rust verifier — the consensus oracle."""
@@ -342,6 +379,8 @@ def run(seed: int = 0) -> int:
     print("stage 3: the PoW sweep, two job shapes")
     for shape_row in SHAPES:
         test_pow(mtl, shape_row, rng)
+    print("stage 3b: blocked fast-path kernel (pow_sweep_v2)")
+    test_pow_v2(mtl, rng)
     print("stage 4: end-to-end against upstream's consensus verifier")
     test_end_to_end(mtl, rng)
 

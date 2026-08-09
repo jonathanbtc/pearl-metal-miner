@@ -22,9 +22,10 @@ void set_err(char *err, size_t errlen, NSString *msg) {
   }
 }
 
-constexpr uint32_t kNumKernels = 5;
+constexpr uint32_t kNumKernels = 6;
 const char *const kKernelNames[kNumKernels] = {
     "blake3_64", "noise_uniform", "noise_pairs", "noise_apply", "pow_sweep",
+    "pow_sweep_v2",
 };
 
 struct PowParams {
@@ -304,6 +305,41 @@ int pm_pow_sweep(pm_ctx *ctx, void *an, void *bnt, void *row_bases, uint32_t n_r
   return pow_sweep_impl(ctx, an, bnt, row_bases, n_row_bases, col_bases, n_col_bases,
                         a_seed, bound, hits, hits_capacity, digests_out, nullptr, nullptr,
                         err, errlen);
+}
+
+/* Fast-path blocked sweep. Host must ensure rows_pattern == [0,32] (two-level),
+ * cols_pattern == [0..63], r <= 128, m %% 64 == 0, n %% 64 == 0. */
+int pm_pow_sweep2(pm_ctx *ctx, void *an, void *bnt, uint32_t band_lo,
+                  uint32_t n_bands, uint32_t n_col_bases, const uint8_t *a_seed,
+                  const uint8_t *bound, void *hits, uint32_t hits_capacity,
+                  void *digests_out, char *err, size_t errlen) {
+  const pm_shape &s = ctx->shape;
+  if (!(s.rows[0] == 32 && s.rows[1] == 2 && s.rows[3] == 1 && s.rows[5] == 1 &&
+        s.cols[0] == 1 && s.cols[1] == 64 && s.cols[3] == 1 && s.cols[5] == 1 &&
+        s.r <= 128)) {
+    set_err(err, errlen, @"shape not eligible for pow_sweep_v2 fast path");
+    return 1;
+  }
+  PowParams P = {n_bands, n_col_bases, hits_capacity, digests_out ? 1u : 0u};
+  Bytes32 seed32, bound32;
+  memcpy(seed32.b, a_seed, 32);
+  memcpy(bound32.b, bound, 32);
+  uint32_t params2[2] = {band_lo, n_col_bases};
+  uint32_t p2a = params2[0], p2b = params2[1];
+  return run(
+      ctx, 5, MTLSizeMake(n_col_bases, n_bands, 1), MTLSizeMake(256, 1, 1), 0, true,
+      ^(id<MTLComputeCommandEncoder> enc) {
+        uint32_t pp[2] = {p2a, p2b};
+        [enc setBuffer:mb(an) offset:0 atIndex:0];
+        [enc setBuffer:mb(bnt) offset:0 atIndex:1];
+        [enc setBytes:pp length:8 atIndex:2];
+        [enc setBytes:seed32.b length:32 atIndex:4];
+        [enc setBytes:bound32.b length:32 atIndex:5];
+        [enc setBuffer:mb(hits) offset:0 atIndex:6];
+        [enc setBytes:&P length:sizeof(P) atIndex:7];
+        [enc setBuffer:(digests_out ? mb(digests_out) : ctx->dummy) offset:0 atIndex:8];
+      },
+      err, errlen);
 }
 
 int pm_pow_sweep_debug(pm_ctx *ctx, void *an, void *bnt, void *row_bases,

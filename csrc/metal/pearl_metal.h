@@ -79,6 +79,13 @@ int pm_pow_sweep(pm_ctx *ctx, void *an, void *bnt, void *row_bases,
                  uint32_t hits_capacity, void *digests_out, char *err,
                  size_t errlen);
 
+/* Blocked fast-path sweep: rows [0,32], cols [0..63], r ≤ 128, 64 | m, 64 | n.
+ * Sweeps bands [band_lo, band_lo+n_bands) × all n_col_bases col tiles. */
+int pm_pow_sweep2(pm_ctx *ctx, void *an, void *bnt, uint32_t band_lo,
+                  uint32_t n_bands, uint32_t n_col_bases, const uint8_t *a_seed,
+                  const uint8_t *bound, void *hits, uint32_t hits_capacity,
+                  void *digests_out, char *err, size_t errlen);
+
 /* Debug variant for small shapes: also writes, per tile, every R-boundary's
  * cumulative tile (h·w i32 × n_chunks) and transcript (16 u32 × n_chunks).
  * Layouts are tile-major then chunk-major. */

@@ -107,6 +107,11 @@ class Metal:
             C.c_uint32, C.c_char_p, C.c_char_p, C.c_void_p, C.c_uint32, C.c_void_p,
             C.c_char_p, C.c_size_t,
         ]
+        lib.pm_pow_sweep2.argtypes = [
+            C.c_void_p, C.c_void_p, C.c_void_p, C.c_uint32, C.c_uint32, C.c_uint32,
+            C.c_char_p, C.c_char_p, C.c_void_p, C.c_uint32, C.c_void_p,
+            C.c_char_p, C.c_size_t,
+        ]
         lib.pm_pow_sweep_debug.argtypes = [
             C.c_void_p, C.c_void_p, C.c_void_p, C.c_void_p, C.c_uint32, C.c_void_p,
             C.c_uint32, C.c_char_p, C.c_char_p, C.c_void_p, C.c_uint32, C.c_void_p,
@@ -176,6 +181,17 @@ class Metal:
         self._check(
             self._lib.pm_pow_sweep(
                 self._ctx, an._h, bnt._h, row_bases._h, n_rb, col_bases._h, n_cb,
+                a_seed, bound, hits._h, hits_cap,
+                digests_out._h if digests_out else None, self._err, 1024,
+            )
+        )
+
+    def pow_sweep2(self, an: Buf, bnt: Buf, band_lo: int, n_bands: int,
+                   n_col_bases: int, a_seed: bytes, bound: bytes, hits: Buf,
+                   hits_cap: int, digests_out: Buf | None = None):
+        self._check(
+            self._lib.pm_pow_sweep2(
+                self._ctx, an._h, bnt._h, band_lo, n_bands, n_col_bases,
                 a_seed, bound, hits._h, hits_cap,
                 digests_out._h if digests_out else None, self._err, 1024,
             )
