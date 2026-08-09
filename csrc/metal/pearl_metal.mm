@@ -94,6 +94,10 @@ int pm_compile(pm_ctx *ctx, const pm_shape *shape, char *err, size_t errlen) {
                                              length:PEARL_KERNELS_MSL_LEN
                                            encoding:NSUTF8StringEncoding];
     MTLCompileOptions *opts = [MTLCompileOptions new];
+    // IEEE fp32 semantics are load-bearing: the fast-path GEMM accumulates
+    // chunk partials (integers < 2^24) in fp32 FMA, exactly, only because
+    // fast-math is off. The self-test enforces the resulting bit-exactness.
+    opts.fastMathEnabled = NO;
     NSError *nserr = nil;
     id<MTLLibrary> lib = [ctx->device newLibraryWithSource:src options:opts error:&nserr];
     if (!lib) {

@@ -10,7 +10,9 @@ Observed:
         diff (pool difficulty, varDiff), header (76-byte hex), height,
         job_id ("<hex8>_<diff>"), target (big-endian hex)
   → mining.submit     params OBJECT {wallet, worker, job_id, plain_proof}
-      (same family as kryptex/k1pool; confirmed live by an accepted share)
+      (same family as kryptex/k1pool; framing not yet exercised by an
+      accepted share — their starting difficulty 888888 is in diff1 units,
+      ≈6.5e9 tiles/share, hours at current speed)
 """
 
 from __future__ import annotations

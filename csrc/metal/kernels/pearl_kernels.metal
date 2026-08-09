@@ -336,7 +336,9 @@ kernel void pow_sweep_v2(device const char *an [[buffer(0)]],
   const uint row0 = band * 2 * S;    // first row of this band
   const uint nchunks = FC_K / FC_R;
 
-  threadgroup uchar As[2 * 32 * 128];     // 2S × R  (S=32, R≤128 fast path)
+  // Only Bᵀ is staged: each Bs row is read by all S tiles' threads, while an
+  // A row is shared by just 8 threads — the device cache covers that, and the
+  // smaller footprint (10 KB vs 18 KB) lets 3 threadgroups reside per core.
   threadgroup uchar Bs[64 * 128];         // W × R
   threadgroup uint tr[32 * 16];           // S transcripts
 
@@ -348,20 +350,16 @@ kernel void pow_sweep_v2(device const char *an [[buffer(0)]],
   int acc[2][8];
   for (int a = 0; a < 2; a++)
     for (int b = 0; b < 8; b++) acc[a][b] = 0;
+  // Chunk partials accumulate in fp32 FMA. Exact by range: every partial is
+  // an integer of magnitude ≤ R·127² ≤ 2,064,512 < 2²⁴, and fast-math is off
+  // (IEEE). The CUMULATIVE sum (up to 66M > 2²⁴) stays in int32 below.
 
   const uint nthreads = S * 8u;      // 256
   for (uint t = 0; t < nchunks; t++) {
     const uint klo = t * FC_R;
-    // Cooperative stage as u32 words (K and R are multiples of 4).
-    device const uint *an32 = (device const uint *)an;
+    // Cooperative stage of Bᵀ as u32 words (K and R are multiples of 4).
     device const uint *bnt32 = (device const uint *)bnt;
-    threadgroup uint *As32 = (threadgroup uint *)As;
     threadgroup uint *Bs32 = (threadgroup uint *)Bs;
-    const uint awords = 2 * S * FC_R / 4;
-    for (uint i = tid; i < awords; i += nthreads) {
-      uint rr = i / (FC_R / 4), lw = i % (FC_R / 4);
-      As32[i] = an32[(ulong)(row0 + rr) * (FC_K / 4) + klo / 4 + lw];
-    }
     const uint bwords = W * FC_R / 4;
     for (uint i = tid; i < bwords; i += nthreads) {
       uint cc = i / (FC_R / 4), lw = i % (FC_R / 4);
@@ -369,19 +367,33 @@ kernel void pow_sweep_v2(device const char *an [[buffer(0)]],
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
-    threadgroup const char4 *a0 = (threadgroup const char4 *)(As + o * FC_R);
-    threadgroup const char4 *a1 = (threadgroup const char4 *)(As + (o + S) * FC_R);
+    device const char4 *a0 =
+        (device const char4 *)(an + (ulong)(row0 + o) * FC_K + klo);
+    device const char4 *a1 =
+        (device const char4 *)(an + (ulong)(row0 + o + S) * FC_K + klo);
+    // Chunk partials in scalar fp32 FMA chains. Exact: every partial is an
+    // integer ≤ R·127² = 2,064,512 < 2²⁴ and fast-math is off (IEEE). The
+    // cumulative tile value (up to 66M > 2²⁴) lives only in int32 `acc`.
+    float facc[2][8];
+    for (int a = 0; a < 2; a++)
+      for (int b = 0; b < 8; b++) facc[a][b] = 0.0f;
     for (uint l4 = 0; l4 < FC_R / 4; l4++) {
-      char4 av0 = a0[l4];
-      char4 av1 = a1[l4];
+      float4 av0 = float4(a0[l4]);
+      float4 av1 = float4(a1[l4]);
       for (uint b = 0; b < 8; b++) {
-        char4 bv = ((threadgroup const char4 *)(Bs + (j0 + b) * FC_R))[l4];
-        acc[0][b] += (int)av0.x * (int)bv.x + (int)av0.y * (int)bv.y +
-                     (int)av0.z * (int)bv.z + (int)av0.w * (int)bv.w;
-        acc[1][b] += (int)av1.x * (int)bv.x + (int)av1.y * (int)bv.y +
-                     (int)av1.z * (int)bv.z + (int)av1.w * (int)bv.w;
+        float4 bv = float4(((threadgroup const char4 *)(Bs + (j0 + b) * FC_R))[l4]);
+        facc[0][b] = fma(av0.x, bv.x, facc[0][b]);
+        facc[0][b] = fma(av0.y, bv.y, facc[0][b]);
+        facc[0][b] = fma(av0.z, bv.z, facc[0][b]);
+        facc[0][b] = fma(av0.w, bv.w, facc[0][b]);
+        facc[1][b] = fma(av1.x, bv.x, facc[1][b]);
+        facc[1][b] = fma(av1.y, bv.y, facc[1][b]);
+        facc[1][b] = fma(av1.z, bv.z, facc[1][b]);
+        facc[1][b] = fma(av1.w, bv.w, facc[1][b]);
       }
     }
+    for (int a = 0; a < 2; a++)
+      for (int b = 0; b < 8; b++) acc[a][b] += (int)facc[a][b];
 
     uint my = 0u;
     for (int a = 0; a < 2; a++)

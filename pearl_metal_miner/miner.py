@@ -17,6 +17,7 @@ import json
 import os
 import queue
 import sys
+import threading
 import time
 
 
@@ -137,6 +138,40 @@ def _version_text() -> str:
             f"Not affiliated with Pearl Research Labs.\n\n{isc}")
 
 
+class GridFactory(threading.Thread):
+    """Prepares the next grid's host side (generation + Merkle commitment)
+    while the GPU sweeps the current one. The GPU wait releases the GIL, so
+    the overlap is real. A prepared grid is bound to a job_id; a stale one is
+    discarded on job change."""
+
+    def __init__(self, shape, m_dim, n_dim):
+        super().__init__(daemon=True)
+        self.shape, self.m_dim, self.n_dim = shape, m_dim, n_dim
+        self.requests: queue.Queue = queue.Queue()
+        self.ready: queue.Queue = queue.Queue()
+        self.rng = np.random.default_rng()
+        self.start()
+
+    def request(self, job):
+        self.requests.put(job)
+
+    def take(self, job, timeout: float):
+        """A grid for `job`, from the pipeline if it matches, else built inline."""
+        try:
+            while True:
+                job_id, grid = self.ready.get(timeout=timeout)
+                if job_id == job.job_id:
+                    return grid
+        except queue.Empty:
+            return Grid(self.shape, self.m_dim, self.n_dim, job.header_bytes, self.rng)
+
+    def run(self):
+        while True:
+            job = self.requests.get()
+            grid = Grid(self.shape, self.m_dim, self.n_dim, job.header_bytes, self.rng)
+            self.ready.put((job.job_id, grid))
+
+
 def run(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pearl-metal-miner")
     ap.add_argument("--version", action="store_true",
@@ -205,7 +240,7 @@ def run(argv=None) -> int:
     grid: Grid | None = None
     bound_bytes = b""
     row_cursor = 0
-    rng = np.random.default_rng()
+    factory = GridFactory(shape, args.m, args.n)
     pending: dict[int, str] = {}
     stats = {"tiles": 0, "grids": 0, "sub": 0, "acc": 0, "rej": 0, "t0": time.time(),
              "last_report": time.time()}
@@ -265,15 +300,17 @@ def run(argv=None) -> int:
                 continue
             bound_bytes = bound_int.to_bytes(32, "little")
             t0 = time.time()
-            grid = Grid(shape, args.m, args.n, job.header_bytes, rng)
+            grid = factory.take(job, timeout=0.001 if new_job else 30.0)
+            factory.request(job)  # start the next one immediately
             engine.load_grid(grid)
             stats["grids"] += 1
             row_cursor = 0
             n_regions = engine.n_regions(args.region_rows)
-            log(f"job {job.job_id} height={job.height}: grid #{stats['grids']} "
-                f"committed+noised in {time.time() - t0:.2f}s "
-                f"(~2^{bound_int.bit_length() - 1} bound, "
-                f"{engine.n_tiles_grid} tiles/grid)")
+            if stats["grids"] == 1 or new_job:
+                log(f"job {job.job_id} height={job.height}: grid #{stats['grids']} "
+                    f"ready in {time.time() - t0:.2f}s "
+                    f"(~2^{bound_int.bit_length() - 1} bound, "
+                    f"{engine.n_tiles_grid} tiles/grid)")
 
         t_burst = time.time()
         hits, n_tiles = engine.sweep_region(row_cursor, args.region_rows,
