@@ -124,8 +124,25 @@ class Engine:
         return [(int(pairs[2 * i]), int(pairs[2 * i + 1])) for i in range(count)], n_tiles
 
 
+VERSION = "0.1.0"
+
+
+def _version_text() -> str:
+    notice = os.path.join(os.path.dirname(__file__), "..", "NOTICE")
+    isc = ""
+    if os.path.exists(notice):
+        with open(notice) as f:
+            isc = f.read()
+    return (f"pearl-metal-miner {VERSION} — Apache-2.0, no dev fee.\n"
+            f"Not affiliated with Pearl Research Labs.\n\n{isc}")
+
+
 def run(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="pearl-metal-miner")
+    ap.add_argument("--version", action="store_true",
+                    help="print version and third-party notices")
+    ap.add_argument("--self-test", action="store_true",
+                    help="run the live differential against the reference and exit")
     ap.add_argument("--pool", choices=sorted(DIALECTS), default="kryptex")
     ap.add_argument("--host")
     ap.add_argument("--port", type=int)
@@ -150,6 +167,13 @@ def run(argv=None) -> int:
     ap.add_argument("--time-limit", type=float, default=0,
                     help="stop after N seconds (0 = none)")
     args = ap.parse_args(argv)
+
+    if args.version:
+        print(_version_text())
+        return 0
+    if args.self_test:
+        from . import selftest
+        return selftest.run()
 
     if not args.address:
         burner = os.path.join(os.path.dirname(__file__), "..", "burner_wallet.json")

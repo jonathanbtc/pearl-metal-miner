@@ -1,0 +1,49 @@
+pearl-metal-miner
+Copyright 2026 the pearl-metal-miner contributors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+Not affiliated with Pearl Research Labs.
+
+This project is built against, and depends at runtime on, the ISC-licensed
+`pearl-research-labs/pearl` monorepo (the mining algorithm, the `miner_base`
+oracle, `py-pearl-mining` — Merkle commitment, PlainProof, and the verifier).
+No upstream code is vendored into this repository; the ISC notice is
+reproduced here in full deliberately, whether or not reproduction is strictly
+triggered:
+
+    ISC License
+
+    Copyright (c) 2025-2026 Pearl Research Labs
+    Copyright (c) 2015-2016 The Decred developers
+
+    Permission to use, copy, modify, and distribute this software for any
+    purpose with or without fee is hereby granted, provided that the above
+    copyright notice and this permission notice appear in all copies.
+
+    THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+    WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+    MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+    ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+    WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+    ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+Attributions (no code shipped from either; credited for what was learned):
+
+  - arabel1a/ascend_prl (MIT, Copyright (c) 2026 arabel1a) — the insight that
+    Pearl pools speak different Stratum dialects, and an independent
+    description of the Kryptex and K1Pool dialects, which informed the shape
+    of this project's dialect seam. Its documented request that its optional
+    developer fee not be silently zeroed is moot here — none of its code is
+    used — and is honoured anyway by this loud attribution.
+
+  - open-jarvis/OpenJarvis (Apache-2.0) — independent confirmation that the
+    upstream host commitment path is bit-exact on Apple Silicon.
+
+  - Yose144/Zion-v3.0.0 (MIT) — listed in the plan as a permitted cross-check
+    for Metal engineering; in the end it was never read beyond its public
+    README, and nothing from it appears here.
+
+The Stratum dialect of LuckyPool was reverse-engineered from live wire
+traffic recorded by tools/pool_survey.py; no third-party implementation of it
+was consulted.
