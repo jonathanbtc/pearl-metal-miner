@@ -1,0 +1,312 @@
+// Pearl PoW Metal kernels.
+//
+// Consensus reference: zk-pow/src in pearl-research-labs/pearl (ISC), pinned
+// in PINNED_PEARL_COMMIT.txt; NumPy restatement in pearl_metal_miner/reference.py.
+// Every stage here is differentially tested against that reference — exact
+// integers, no tolerances (Plan.md §3).
+//
+// The job shape arrives as function constants (ADR-0004/0006): the compiler
+// folds k, r, h, w and both PeriodicPattern shapes into the code as literals.
+
+#include <metal_stdlib>
+using namespace metal;
+
+constant uint FC_K [[function_constant(0)]]; // common dimension
+constant uint FC_R [[function_constant(1)]]; // noise rank
+constant uint FC_H [[function_constant(2)]]; // |rows_pattern|
+constant uint FC_W [[function_constant(3)]]; // |cols_pattern|
+constant uint FC_ROW_S0 [[function_constant(4)]];
+constant uint FC_ROW_L0 [[function_constant(5)]];
+constant uint FC_ROW_S1 [[function_constant(6)]];
+constant uint FC_ROW_L1 [[function_constant(7)]];
+constant uint FC_ROW_S2 [[function_constant(8)]];
+constant uint FC_ROW_L2 [[function_constant(9)]];
+constant uint FC_COL_S0 [[function_constant(10)]];
+constant uint FC_COL_L0 [[function_constant(11)]];
+constant uint FC_COL_S1 [[function_constant(12)]];
+constant uint FC_COL_L1 [[function_constant(13)]];
+constant uint FC_COL_S2 [[function_constant(14)]];
+constant uint FC_COL_L2 [[function_constant(15)]];
+
+// PeriodicPattern element p, in to_list order:
+//   off(p) = (p % l0)·s0 + ((p / l0) % l1)·s1 + (p / (l0·l1))·s2
+inline uint row_pattern_offset(uint p) {
+  return (p % FC_ROW_L0) * FC_ROW_S0 + ((p / FC_ROW_L0) % FC_ROW_L1) * FC_ROW_S1 +
+         (p / (FC_ROW_L0 * FC_ROW_L1)) * FC_ROW_S2;
+}
+inline uint col_pattern_offset(uint p) {
+  return (p % FC_COL_L0) * FC_COL_S0 + ((p / FC_COL_L0) % FC_COL_L1) * FC_COL_S1 +
+         (p / (FC_COL_L0 * FC_COL_L1)) * FC_COL_S2;
+}
+
+// ── Keyed BLAKE3, single 64-byte block ──────────────────────────────────────
+// The only BLAKE3 the GPU ever needs (Plan.md §2.2.5): message is exactly one
+// block, so flags = CHUNK_START|CHUNK_END|ROOT|KEYED_HASH, counter 0, len 64.
+
+constant uint B3_IV0 = 0x6A09E667u;
+constant uint B3_IV1 = 0xBB67AE85u;
+constant uint B3_IV2 = 0x3C6EF372u;
+constant uint B3_IV3 = 0xA54FF53Au;
+constant uint B3_FLAGS = 1u | 2u | 8u | 16u; // CHUNK_START|CHUNK_END|ROOT|KEYED_HASH
+
+inline uint rotr32(uint x, uint n) { return (x >> n) | (x << (32u - n)); }
+
+inline void b3_g(thread uint *st, uint a, uint b, uint c, uint d, uint mx, uint my) {
+  st[a] = st[a] + st[b] + mx;
+  st[d] = rotr32(st[d] ^ st[a], 16u);
+  st[c] = st[c] + st[d];
+  st[b] = rotr32(st[b] ^ st[c], 12u);
+  st[a] = st[a] + st[b] + my;
+  st[d] = rotr32(st[d] ^ st[a], 8u);
+  st[c] = st[c] + st[d];
+  st[b] = rotr32(st[b] ^ st[c], 7u);
+}
+
+inline void b3_round(thread uint *st, thread const uint *m) {
+  b3_g(st, 0, 4, 8, 12, m[0], m[1]);
+  b3_g(st, 1, 5, 9, 13, m[2], m[3]);
+  b3_g(st, 2, 6, 10, 14, m[4], m[5]);
+  b3_g(st, 3, 7, 11, 15, m[6], m[7]);
+  b3_g(st, 0, 5, 10, 15, m[8], m[9]);
+  b3_g(st, 1, 6, 11, 12, m[10], m[11]);
+  b3_g(st, 2, 7, 8, 13, m[12], m[13]);
+  b3_g(st, 3, 4, 9, 14, m[14], m[15]);
+}
+
+constant uchar B3_PERM[16] = {2, 6, 3, 10, 7, 0, 4, 13, 1, 11, 12, 5, 9, 14, 15, 8};
+
+// msg: 16 words (the 64-byte block, little-endian words); key: 8 words; out: 8 words.
+inline void blake3_64_keyed(thread const uint *msg, thread const uint *key, thread uint *out) {
+  uint st[16];
+  for (int i = 0; i < 8; i++) st[i] = key[i];
+  st[8] = B3_IV0;
+  st[9] = B3_IV1;
+  st[10] = B3_IV2;
+  st[11] = B3_IV3;
+  st[12] = 0u; // counter lo
+  st[13] = 0u; // counter hi
+  st[14] = 64u; // block length
+  st[15] = B3_FLAGS;
+  uint m[16], t[16];
+  for (int i = 0; i < 16; i++) m[i] = msg[i];
+  for (int r = 0; r < 7; r++) {
+    if (r != 0) {
+      for (int i = 0; i < 16; i++) t[i] = m[B3_PERM[i]];
+      for (int i = 0; i < 16; i++) m[i] = t[i];
+    }
+    b3_round(st, m);
+  }
+  for (int i = 0; i < 8; i++) out[i] = st[i] ^ st[i + 8];
+}
+
+// ── blake3_64: batch primitive (test surface for the function above) ────────
+
+kernel void blake3_64(device const uint *msgs [[buffer(0)]],  // count × 16 words
+                      device const uint *keys [[buffer(1)]],  // count × 8 words
+                      device uint *out [[buffer(2)]],         // count × 8 words
+                      constant uint &count [[buffer(3)]],
+                      uint gid [[thread_position_in_grid]]) {
+  if (gid >= count) return;
+  uint m[16], k[8], d[8];
+  for (int i = 0; i < 16; i++) m[i] = msgs[gid * 16 + i];
+  for (int i = 0; i < 8; i++) k[i] = keys[gid * 8 + i];
+  blake3_64_keyed(m, k, d);
+  for (int i = 0; i < 8; i++) out[gid * 8 + i] = d[i];
+}
+
+// ── Noise generation (Plan.md §2.3; pearl_noise.rs) ─────────────────────────
+// Message: eight i32 slots with slot `prepend` ← 1+index, then the 32-byte
+// seed label. One digest yields 32 uniform bytes or 8 permutation pairs.
+
+inline void noise_digest(uint index, uint prepend_slot, device const uint *seed,
+                         device const uint *key, thread uint *d) {
+  uint m[16] = {0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
+  m[prepend_slot] = 1u + index;
+  for (int i = 0; i < 8; i++) m[8 + i] = seed[i];
+  uint k[8];
+  for (int i = 0; i < 8; i++) k[i] = key[i];
+  blake3_64_keyed(m, k, d);
+}
+
+// One thread per 32-byte block of the uniform table: value = (byte & 63) − 32.
+kernel void noise_uniform(device const uint *seed [[buffer(0)]],
+                          device const uint *key [[buffer(1)]],
+                          device char *out [[buffer(2)]],
+                          constant uint &nblocks [[buffer(3)]],
+                          uint gid [[thread_position_in_grid]]) {
+  if (gid >= nblocks) return;
+  uint d[8];
+  noise_digest(gid, 0u, seed, key, d);
+  device char *o = out + gid * 32u;
+  for (int i = 0; i < 8; i++) {
+    uint w = d[i];
+    for (int b = 0; b < 4; b++) {
+      o[i * 4 + b] = (char)((int)((w >> (8u * b)) & 63u) - 32);
+    }
+  }
+}
+
+// One thread per digest = 8 permutation pairs:
+//   first = u & (R−1);  second = first ^ (1 + mulhi(R−1, u))
+kernel void noise_pairs(device const uint *seed [[buffer(0)]],
+                        device const uint *key [[buffer(1)]],
+                        device uint2 *out [[buffer(2)]],
+                        constant uint &ndigests [[buffer(3)]],
+                        uint gid [[thread_position_in_grid]]) {
+  if (gid >= ndigests) return;
+  uint d[8];
+  noise_digest(gid, 1u, seed, key, d);
+  for (uint j = 0; j < 8; j++) {
+    uint kk = gid * 8u + j;
+    if (kk >= FC_K) return;
+    uint u = d[j];
+    uint first = u & (FC_R - 1u);
+    uint second = first ^ (1u + mulhi(FC_R - 1u, u));
+    out[kk] = uint2(first, second);
+  }
+}
+
+// Noised operand: out[row,l] = base[row,l] + table[row,first(l)] − table[row,second(l)].
+// The sum provably fits int8 (committed [−64,64], noise [−63,63] → [−127,127]).
+kernel void noise_apply(device const char *base [[buffer(0)]],
+                        device const char *table [[buffer(1)]],
+                        device const uint2 *pairs [[buffer(2)]],
+                        device char *out [[buffer(3)]],
+                        constant uint &rows [[buffer(4)]],
+                        uint2 gid [[thread_position_in_grid]]) {
+  if (gid.x >= FC_K || gid.y >= rows) return;
+  uint2 p = pairs[gid.x];
+  int noise = (int)table[gid.y * FC_R + p.x] - (int)table[gid.y * FC_R + p.y];
+  out[gid.y * FC_K + gid.x] = (char)((int)base[gid.y * FC_K + gid.x] + noise);
+}
+
+// ── The PoW sweep (Plan.md §2.1; jackpot/helper.rs) ─────────────────────────
+// One threadgroup per hash tile; one thread per tile element (h·w ≤ 256).
+// Per R-chunk: cooperative stage of the h and w operand slices, cumulative
+// int32 accumulate, XOR-reduce the tile, rotate-left-13-and-XOR into the
+// transcript slot (chunk mod 16). At the end, keyed BLAKE3 and an inclusive
+// little-endian comparison against the bound.
+
+struct PowParams {
+  uint n_row_bases;
+  uint n_col_bases;
+  uint hits_cap;
+  uint flags; // bit0: write digests_out; bit1: write debug captures
+};
+
+kernel void pow_sweep(device const char *an [[buffer(0)]],
+                      device const char *bnt [[buffer(1)]],
+                      device const uint *row_bases [[buffer(2)]],
+                      device const uint *col_bases [[buffer(3)]],
+                      device const uint *a_seed [[buffer(4)]],
+                      device const uchar *bound [[buffer(5)]],
+                      device atomic_uint *hits [[buffer(6)]],
+                      constant PowParams &P [[buffer(7)]],
+                      device uchar *digests_out [[buffer(8)]],
+                      device int *csums_out [[buffer(9)]],
+                      device uint *transcripts_out [[buffer(10)]],
+                      threadgroup uchar *shmem [[threadgroup(0)]],
+                      uint2 tgid [[threadgroup_position_in_grid]],
+                      uint tid [[thread_index_in_threadgroup]],
+                      uint lane [[thread_index_in_simdgroup]],
+                      uint sgid [[simdgroup_index_in_threadgroup]],
+                      uint nsg [[simdgroups_per_threadgroup]]) {
+  const uint nthreads = FC_H * FC_W;
+  const uint u = tid / FC_W;
+  const uint v = tid % FC_W;
+  const uint base_r = row_bases[tgid.y];
+  const uint base_c = col_bases[tgid.x];
+  const uint tile_idx = tgid.y * P.n_col_bases + tgid.x;
+  const uint nchunks = FC_K / FC_R; // k mod R tail contributes nothing
+
+  threadgroup uchar *As = shmem;                       // FC_H·FC_R bytes
+  threadgroup uchar *Bs = shmem + FC_H * FC_R;         // FC_W·FC_R bytes
+  threadgroup uint *scratch =                          // per-simdgroup XOR
+      (threadgroup uint *)(shmem + FC_H * FC_R + FC_W * FC_R);
+  threadgroup uint *tr = scratch + 8;                  // 16-word transcript
+
+  if (tid < 16u) tr[tid] = 0u;
+
+  int acc = 0; // this thread's CUMULATIVE int32 tile element
+
+  for (uint t = 0; t < nchunks; t++) {
+    const uint klo = t * FC_R;
+    // Stage the h rows and w cols of this chunk.
+    for (uint i = tid; i < FC_H * FC_R; i += nthreads) {
+      uint rr = i / FC_R, ll = i % FC_R;
+      As[i] = as_type<uchar>(an[(ulong)(base_r + row_pattern_offset(rr)) * FC_K + klo + ll]);
+    }
+    for (uint i = tid; i < FC_W * FC_R; i += nthreads) {
+      uint cc = i / FC_R, ll = i % FC_R;
+      Bs[i] = as_type<uchar>(bnt[(ulong)(base_c + col_pattern_offset(cc)) * FC_K + klo + ll]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    threadgroup const char *arow = (threadgroup const char *)(As + u * FC_R);
+    threadgroup const char *brow = (threadgroup const char *)(Bs + v * FC_R);
+    int s = 0;
+    for (uint l = 0; l < FC_R; l += 4) {
+      char4 a4 = *((threadgroup const char4 *)(arow + l));
+      char4 b4 = *((threadgroup const char4 *)(brow + l));
+      s += (int)a4.x * (int)b4.x + (int)a4.y * (int)b4.y + (int)a4.z * (int)b4.z +
+           (int)a4.w * (int)b4.w;
+    }
+    acc += s;
+
+    // XOR-reduce the cumulative tile (order-free: XOR commutes).
+    uint xr = simd_xor(as_type<uint>(acc));
+    if (lane == 0) scratch[sgid] = xr;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0) {
+      uint x = 0u;
+      for (uint i = 0; i < nsg; i++) x ^= scratch[i];
+      uint slot = t % 16u;
+      uint prev = tr[slot];
+      tr[slot] = ((prev << 13u) | (prev >> 19u)) ^ x;
+    }
+    if (P.flags & 2u) {
+      csums_out[((ulong)tile_idx * nchunks + t) * nthreads + tid] = acc;
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      if (tid == 0)
+        for (uint i = 0; i < 16u; i++)
+          transcripts_out[((ulong)tile_idx * nchunks + t) * 16u + i] = tr[i];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+  }
+
+  if (tid != 0) return;
+
+  uint msg[16], key[8], d[8];
+  for (int i = 0; i < 16; i++) msg[i] = tr[i];
+  for (int i = 0; i < 8; i++) key[i] = a_seed[i];
+  blake3_64_keyed(msg, key, d);
+
+  if (P.flags & 1u) {
+    device uchar *o = digests_out + (ulong)tile_idx * 32u;
+    for (int i = 0; i < 8; i++) {
+      uint w = d[i];
+      o[i * 4 + 0] = w & 0xFFu;
+      o[i * 4 + 1] = (w >> 8) & 0xFFu;
+      o[i * 4 + 2] = (w >> 16) & 0xFFu;
+      o[i * 4 + 3] = (w >> 24) & 0xFFu;
+    }
+  }
+
+  // Inclusive little-endian comparison: digest ≤ bound.
+  bool win = true;
+  for (int i = 31; i >= 0; i--) {
+    uchar hb = (d[i / 4] >> (8 * (i % 4))) & 0xFFu;
+    uchar bb = bound[i];
+    if (hb != bb) {
+      win = hb < bb;
+      break;
+    }
+  }
+  if (win) {
+    uint idx = atomic_fetch_add_explicit(&hits[0], 1u, memory_order_relaxed);
+    if (idx < P.hits_cap) {
+      atomic_store_explicit(&hits[1 + 2 * idx], base_r, memory_order_relaxed);
+      atomic_store_explicit(&hits[2 + 2 * idx], base_c, memory_order_relaxed);
+    }
+  }
+}
