@@ -70,9 +70,10 @@ The pair of hashes derived from A's and Bᵀ's Merkle roots. Doubles as the
 source of the noise seeds, so a grid cannot be mined before it is committed.
 
 **Noised operand**:
-`ApEA` or `BpEB` — a committed matrix with its noise added and clamped back to
-int8. **These, not the committed matrices, are what the PoW GEMM multiplies**,
-and they span the full int8 range.
+`A′` or `B′ᵀ` — a committed matrix plus its noise, added as int32. There is no
+clamp: the ranges guarantee the sum fits int8. **These, not the committed
+matrices, are what the PoW GEMM multiplies**, and they span nearly the full
+int8 range where the committed matrices span half of it.
 _Avoid_: A, B, operand, input — all ambiguous with **committed matrix**
 
 **Noise rank (R)**:
@@ -86,15 +87,19 @@ _Avoid_: rank alone, tile width
 
 **Hash tile**:
 The unit of the lottery. One hash tile is folded into its own transcript,
-hashed, and compared to the target independently of every other tile. Its
-dimensions come from the job, and it is selected by a **pattern** rather than
-being necessarily a contiguous block of the output.
+hashed, and compared to the target independently of every other tile. It is
+selected by the two **patterns** applied at a **base offset**, and the valid
+base offsets make the tiles partition the output matrix exactly — the
+partition is enforced by the verifier, so the search space per grid is fixed
+by consensus, not chosen by the miner. See
+[[docs/adr/0007-hash-tile-is-a-pattern-selected-partition]].
 _Avoid_: tile alone (ambiguous with the k-tiling at R), block, output tile
 
 **Pattern**:
-The row and column index lists that select which elements of the output form one
-**hash tile**. Supplied by the miner or dictated by the pool depending on the
-**dialect**.
+A `PeriodicPattern` — a three-level arithmetic progression over row or column
+indices, 6 bytes on the wire — that selects which rows of A and which columns
+of B form one **hash tile**. Committed inside the job key. Supplied by the
+miner or dictated by the pool depending on the **dialect**.
 _Avoid_: mask, selection, indices
 
 **Region**:

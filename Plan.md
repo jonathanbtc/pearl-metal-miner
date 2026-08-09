@@ -61,20 +61,17 @@ incorrect = rejected share, silently
 | **Runtime MSL compilation needs no Xcode; int32 MAC is exact on this GPU** ✅ 08-02 | `tools/metal_probe.mm`, built with Command Line Tools only and run on this machine. `127 × 127 × 4096 = 66,064,384` returned exactly, 256/256 rows. See [ADR-0004](docs/adr/0004-no-xcode-runtime-shader-compilation.md). |
 | **Economics** ✅ 08-02 | hashrate.no: PRL $0.26, network 28.54 EH/s, block reward 2460 PRL, **$0.00829 per TH/s per day**. |
 
-**Citations withdrawn under [ADR-0005](docs/adr/0005-public-apache-2-built-from-isc-upstream.md).**
-The following were verified on 2026-08-02 against `Muskwak/Open-Pearl-Miner`.
-That repository is now barred, so these facts can no longer be re-checked at
-their original source and are **downgraded to ⚠️ until re-verified against
-`miner_base` in Phase 0.5.** This is the honest cost of the pivot, not a
-regression in what is true.
+**Citations withdrawn under [ADR-0005](docs/adr/0005-public-apache-2-built-from-isc-upstream.md)
+— all re-sourced against ISC upstream on 2026-08-09 (Phase 0.5).** Nothing
+below rests on the barred repository any more.
 
-| Claim | Status |
-| ----- | ------ |
-| The mandated dimensions M = N = 131072, K = 4096 | ⚠️ Re-source. R = 256 and K = 4096 survive independently via `ascend_prl`. |
-| **HT = 16 (a 16 × 16 hash tile)** | ⚠️ **Actively contradicted** — see §0.2 and §2.1. The single most important thing Phase 0.5 settles. |
-| `pow_key` is `noise_seed_A`, not the job key | ⚠️ Re-source. Corroborated by `Zion`'s `a_noise_seed`, which is not an oracle. |
-| The digest bound is `target × hash_tile_h × hash_tile_w × K` | ⚠️ Doubly unsourced — barred citation, *and* it multiplies by tile dimensions that are themselves in doubt. |
-| The miner chooses A and B; the job fixes only key and target | ⚠️ Re-source. Partly contradicted: some pools dictate `m, n, k, rank` and the pattern. |
+| Claim | Resolution |
+| ----- | ---------- |
+| The mandated dimensions M = N = 131072, K = 4096 | ⚠️→ split. **No consensus mandate on m, n exists** ✅ 08-09 (`sanity_checks.rs`: only m, n ≤ 2²⁴ and pattern-period divisibility). K and R carry real constraints: 16R ≤ K ≤ 4R², so at R = 256, K = 4096 is the *minimum* legal K. What a given pool demands remains ⚠️ Phase 1a. |
+| **HT = 16 (a 16 × 16 hash tile)** | ❌ 08-09. The tile is **pattern-selected**, `h·w ∈ [32, 256]`; upstream GPU settings use 2 × 64. See §2.1 and [ADR-0007](docs/adr/0007-hash-tile-is-a-pattern-selected-partition.md). |
+| `pow_key` is `noise_seed_A`, not the job key | ✅ 08-09. `ffi/mine.rs`: `compute_jackpot_hash(&jackpot, a_noise_seed)`; proven live by E3/E4. |
+| The digest bound is `target × hash_tile_h × hash_tile_w × K` | ✅ 08-09, corrected form: `target × h × w × (K − K mod R)`, plus the fork-gated rank penalty `× 128/R`. `sanity_checks.rs`; pinned by E4's flip-point. |
+| The miner chooses A and B; the job fixes only key and target | ✅ 08-09. Contents are miner-chosen (only range-checked to [−64, 64]); dimensions/rank/pattern may be pool-dictated per dialect. `ffi/mine.rs`, `api/verify.rs`. |
 | `p40_setup_job` generates A/B and commits on the GPU | Deleted. It describes a codebase we do not use. |
 
 ### 0.2 Checked and found false
@@ -148,80 +145,110 @@ speed. Pool payout thresholds mean coins may never actually move.
 
 ## 2. The proof-of-work specification
 
-Source: `miner/miner-base/src/miner_base/` in the ISC monorepo — `noisy_gemm.py`
-(`_tiled_matmul`, `_check_pow_target`) and `noise_generation.py`. This is the
-**oracle**. Where our output and its output disagree, we are wrong.
+**Settled 2026-08-09 by Phase 0.5 — every row below is executed evidence, not
+reading.** Primary source is the consensus implementation itself:
+`zk-pow/src/` in the ISC monorepo (`circuit/chip/jackpot/helper.rs`,
+`circuit/pearl_noise.rs`, `ffi/mine.rs`, `ffi/plain_proof.rs`,
+`api/sanity_checks.rs`, `api/proof_utils.rs`), at the commit pinned in
+`PINNED_PEARL_COMMIT.txt`. `miner_base`'s Python mirrors it and was used as an
+independent cross-check. The proof that our reading is right is
+`tools/phase05_experiments.py`: twenty live checks including a **PlainProof
+built by our own NumPy pipeline that upstream's Rust verifier accepts** (E3),
+a **difficulty flip-point landing on the exact integer our digest predicts**
+(E4), and noise bytes matching `miner_base`'s torch implementation (E5).
+`pearl_metal_miner/reference.py` is that pipeline, kept as the comparator for
+every Metal stage. See
+[ADR-0007](docs/adr/0007-hash-tile-is-a-pattern-selected-partition.md).
 
 ### 2.1 Per-tile algorithm
 
-For noised operands `A` (m × k) and `Bᵀ` (n × k), both int8, computed
-independently per **hash tile**:
+A **hash tile** is `rows = t_rows + rows_pattern` of noised A and
+`cols = t_cols + cols_pattern` of noised Bᵀ — pattern-selected, not
+necessarily contiguous. For each tile, independently:
 
 ```text
-transcript[0 .. T-1] = 0
+transcript[0..15] = 0                        # 16 × u32 ("jackpot")
 
-for t in 0 .. k/R - 1:
-    Csum += A[pattern_rows, tR:(t+1)R] @ Bt[pattern_cols, tR:(t+1)R]ᵀ  # CUMULATIVE int32
-    h     = XOR over all elements of the CUMULATIVE Csum (as uint32)
-    transcript[t % T] = rotl32(transcript[t % T], HASH_ROT) ^ h
+for t in 0 .. k/R - 1:                       # only FULL R-chunks; k mod R tail ignored
+    Csum += A′[rows, tR:(t+1)R] @ B′ᵀ[cols, tR:(t+1)R]ᵀ    # CUMULATIVE int32
+    h     = XOR over all h·w elements of the CUMULATIVE Csum (as u32)
+    transcript[t mod 16] = rotl32(transcript[t mod 16], 13) ^ h
 
-digest = BLAKE3(transcript as u32, key = pow_key)
-tile wins if digest <= bound
+digest = BLAKE3(transcript, 64 bytes little-endian u32s, key = a_noise_seed)
+tile wins iff  uint256_le(digest) <= target(nbits) × h × w × (k − k mod R)
 ```
 
-**Every parameter in that listing, with its current status:**
+**Every parameter, now settled:**
 
-| Parameter | Value | Status |
-| --------- | ----- | ------ |
-| `HASH_ROT` | 13 | ✅ Independently corroborated by `Zion`'s `LROT = 13` |
-| Fold points | at every R-boundary, from the **cumulative** sum | ✅ The constraint the whole port serves |
-| `pow_key` | `noise_seed_A` (the A-side commitment hash) | ⚠️ Re-source in Phase 0.5. Corroborated by `Zion`'s `a_noise_seed` |
-| Hash tile dimensions | ? | ⚠️ **Phase 0.5.** Plan previously said 16 × 16 from a now-barred source; `Zion` uses 4 × 8; OpenJarvis's rank-32 smoke test printed 4 row indices and 8 column indices |
-| Tile selection | pattern (row/column index lists) or contiguous block? | ⚠️ **Phase 0.5.** `py-pearl-mining` exports `PeriodicPattern`; `ascend_prl` carries `rows[64]`/`cols[64]` |
-| `T` (transcript slots) | 16 | ⚠️ Phase 0.5. `Zion`'s `JACKPOT_SIZE = 16`, and its `% JACKPOT_SIZE` implies slots can be written more than once when k/R > T |
-| Transcript serialisation | u32 little-endian | ⚠️ Phase 0.5 |
-| `bound` | `target × tile_h × tile_w × k` | ⚠️ Phase 0.5. Depends on the tile dimensions above |
-| Digest comparison | little-endian **or** big-endian? | ⚠️ **Phase 0.5.** Plan says little-endian; `Zion` compares `hash[i]` against `target[i]` from index 0 upward, i.e. big-endian. One of them is wrong |
-
-The last two ⚠️ rows and the tile-shape rows are the whole reason Phase 0.5
-exists. Each is a silent-rejection failure: get one wrong and the miner runs
-perfectly, finds wins, submits them, and every one is refused with no diagnostic
-that points at the cause.
+| Parameter | Value | Evidence (all ✅ 08-09, executed) |
+| --------- | ----- | -------------------------------- |
+| `HASH_ROT` | 13 (`LROT_PER_TILE`) | `pearl_program.rs`; exercised by E3/E4 |
+| Fold points | every R-boundary, cumulative sum, rotate-left **then** XOR | `jackpot/helper.rs`; E3 |
+| Fold slot | `(chunk_index) mod 16`; slots rewritten only when k/R > 16 (at k=4096, R=256 each slot is written exactly once) | `jackpot/helper.rs` |
+| `pow_key` | `a_noise_seed` = `blake3(blake3(job_key‖hash_b)‖hash_a)`, unkeyed chain over keyed Merkle roots | `ffi/mine.rs::compute_commitment_hash`; E3b/E3d |
+| Hash tile | pattern-selected; `h=|rows_pattern|`, `w=|cols_pattern|`; consensus requires `2\|h`, `2\|w`, `32 ≤ h·w ≤ 256` | `sanity_checks.rs`; [ADR-0007](docs/adr/0007-hash-tile-is-a-pattern-selected-partition.md) |
+| Tile bases | **consensus-constrained to the partition**: `offset_is_valid` enforced by the verifier (E6 rejected base 9: *"offset 9 is not valid"*). Search space = `m·n/(h·w)` tiles exactly | `ffi/plain_proof.rs::list_to_pattern` |
+| Patterns | `PeriodicPattern` = 3-level arithmetic progression, 6-byte encoding; part of the 52-byte `MiningConfiguration` hashed into `job_key` | `proof_utils.rs`; E1 byte-equal |
+| `T` | 16 slots, u32, serialised little-endian (64 bytes) | `noisy_gemm.py` + `compute_jackpot_hash`; E4 |
+| Digest comparison | **little-endian**, inclusive (`<=`) | `U256::from_little_endian` + `noisy_gemm.py`; pinned by E4's flip-point. Zion's big-endian read is Zion's bug |
+| `bound` | `target × h × w × dot_product_length`, `dot_product_length = k − k mod R`. Rank penalty (fork-gated, caller-applied): × `128/R` — neutral at R=128, halves at R=256 | `sanity_checks.rs`; E4 |
+| `nbits` | Bitcoin compact encoding | `nbits_to_difficulty`; E4 |
 
 ### 2.2 Consequences
 
-1. **The transcript folds from the *cumulative* sum at every R-boundary.** You
-   cannot compute a final tile and hash it. Every intermediate cumulative value
-   must be bit-exact int32. This is the constraint the whole port serves.
+1. **The transcript folds from the *cumulative* sum at every R-boundary.**
+   Every intermediate cumulative value must be bit-exact int32. Unchanged, now
+   proven end-to-end.
 2. **The k-loop granularity is fixed at R.** Never a tuning parameter.
-3. **XOR is associative and commutative, so the reduction order within a fold is
-   free.** ✅ Use whatever Metal makes fast.
-4. **Alignment:** `k % R == 0`, and the tile dimensions must divide m and n.
-   Partial tiles do not contribute and are out of scope. Do not "helpfully"
-   handle them.
-5. **BLAKE3 runs on the GPU**, keyed, over a single 64-byte block with
-   `CHUNK_START|CHUNK_END|ROOT`. No chunking, no tree. **The same primitive also
-   drives noise generation** (§2.3), so it is written once.
+3. **XOR reduction order within a fold is free** (upstream reduces row-major;
+   XOR commutes). Use whatever Metal makes fast.
+4. **Alignment:** m and n must be multiples of the pattern periods (the
+   partition demands it); the `k mod R` tail contributes nothing and is
+   skipped, matching `dot_product_length`.
+5. **Every GPU BLAKE3 is a keyed hash of a single 64-byte block** — noise
+   blocks and the jackpot digest both. One primitive, written once. Chunked
+   hashing (Merkle commitment) stays on the host via `py-pearl-mining`.
+6. **Consensus parameter ranges** (`sanity_checks.rs`): R ∈ {32…1024} power of
+   two, 16 | R, and ≥ 128 under the rank-penalty rule; k ≤ 65536, 64 | k,
+   k ≥ 1024, 16R ≤ k ≤ 4R²; m, n ≤ 2²⁴. At R=256, k=4096 is the *minimum*
+   legal k.
 
 ### 2.3 Noise
 
-Source: `miner_base/noise_generation.py`. ✅
+Source: `pearl_noise.rs` (consensus); byte-identical to
+`miner_base/noise_generation.py` (proven, E5). `NOISE_RANGE = 128` is a
+**constant in the consensus source**, not a parameter.
 
 ```text
-EAL  [M, R]   dense int8, from keyed BLAKE3 of (index, seed)
-EBR  [N, R]   dense int8, likewise
-EAR, EBL      sparse int8, exactly one +1 and one −1 per K position
+seed labels: "A_tensor"+24×00, "B_tensor"+24×00
+block(i, seed, key, slot) = BLAKE3(64-byte msg: i32 slots with slot←1+i, then seed; key)
 
-ApEA[m,k] = clamp_i8( A[m,k] + Σ_r EAL[m,r] · EAR_Rmaj[k,r] )
-BpEB[n,k] = clamp_i8( B[n,k] + Σ_r EBR[n,r] · EBL_Rmaj[k,r] )
+EAL[m, R]  int8: bytes of block-stream(seed_A, key=a_noise_seed, slot 0),
+           row m = bytes [mR, mR+R); value = (byte & 0x3F) − 32   ∈ [−32, 31]
+EBR[n, R]  likewise with seed_B, key=b_noise_seed
+pairs_A[k] (+1,−1) indices: u32 LE words of block-stream(seed_A, a_seed, slot 1),
+           first = u & (R−1); second = first ^ (1 + mulhi_u32(R−1, u))
+pairs_B[k] likewise with seed_B, b_seed
+
+noise_A [m,k] = EAL[m, first_A(k)] − EAL[m, second_A(k)]          ∈ [−63, 63]
+noise_Bᵀ[n,k] = EBR[n, first_B(k)] − EBR[n, second_B(k)]
+
+A′  = A  + noise_A     (added as int32; fits int8: [−127, 127])
+B′ᵀ = Bᵀ + noise_Bᵀ
 ```
 
-**The GEMM operand bound is therefore the full int8 range, not the committed
-matrices' narrower one.** This distinction has already caused one wrong design.
+**There is no `clamp_i8` — that claim is dead.** ❌ 08-09. The verifier
+range-checks committed elements to **[−64, +64] inclusive** (IRANGE7P1); noise
+is bounded by construction; the sum never leaves int8. The old open question
+"does the clamp ever fire" is answered: there is nothing to fire.
 
-Noise generation needs roughly 2.1M keyed BLAKE3 digests per grid. ⚠️ Python is
-too slow for this (est. 7–10 s/grid) and `py-pearl-mining` does not expose it
-separately, so it must be a Metal kernel. Settled in Phase 3.
+Worst-case GEMM accumulation is |±127 · ±127 · 4096| = 66,064,384 — the exact
+value `tools/metal_probe.mm` already proved exact on this GPU. §3 unchanged.
+
+Noise cost per grid: one keyed 64-byte BLAKE3 per 32 bytes of EAL/EBR and per
+8 pair-table entries — (m+n)·R/32 + 2·k/8 digests (≈2.1M at m=n=131072,
+R=256), embarrassingly parallel, single-block. The Metal `noise_gen` kernel
+covers it; Python could not (est. 7–10 s/grid).
 
 ---
 
@@ -372,36 +399,40 @@ repo's history.
 
 ---
 
-### Phase 0.5 — Settle the specification against the oracle (0.5 day)
+### Phase 0.5 — Settle the specification against the oracle ✅ DONE 2026-08-09
 
-**Gate: every ⚠️ in §2.1's parameter table becomes ✅ or ❌.**
-**Blocks every kernel in Phase 3. Nothing GPU-shaped starts before this is green.**
-
-This is the cheapest half-day in the plan. Each item below is a silent-failure
-mode: get it wrong and the miner works, finds wins, submits them, and every one
-is refused with nothing to point at.
+**Gate: every ⚠️ in §2.1's parameter table becomes ✅ or ❌ — met.** See §2
+(all values), [ADR-0007](docs/adr/0007-hash-tile-is-a-pattern-selected-partition.md)
+(tile shape), and `tools/phase05_experiments.py` (the twenty live checks).
 
 ```text
-[ ] Hash tile — dimensions, and whether it is a contiguous block or selected by
-    a pattern of row/column indices
-[ ] Whether tile dimensions, rank and pattern are job fields, client constants,
-    or both depending on the pool
-[ ] Target comparison endianness — little or big
-[ ] The bound factor formula, in terms of the tile dimensions just settled
-[ ] Transcript length T, the fold index formula, and its serialisation
-[ ] HASH_ROT, re-confirmed at the oracle
-[ ] pow_key == noise_seed_A, re-sourced to miner_base
-[ ] The miner-chooses-A-and-B property, and what a pool may override
-[ ] Element ranges: committed matrices vs noised operands, at the oracle
-[ ] M, N, K and the R/K constraint
+[x] Hash tile — pattern-selected via two PeriodicPatterns; bases consensus-
+    constrained to the partition (E6)
+[x] Dimensions, rank, pattern are job fields (52-byte MiningConfiguration,
+    hashed into job_key); pools may dictate them per dialect
+[x] Target comparison: LITTLE-endian, inclusive (E4 flip-point)
+[x] Bound: target × h × w × (k − k mod R); rank penalty × 128/R fork-gated
+[x] T = 16, slot = chunk_index mod 16, u32 little-endian ×16 = 64 bytes
+[x] HASH_ROT = 13 (LROT_PER_TILE), rotate-left then XOR
+[x] pow_key = a_noise_seed, chain re-derived and executed (E3)
+[x] Miner chooses A and B contents; verifier range-checks [−64, +64] only
+[x] Ranges: committed [−64,64]; noise [−63,63]; noised i32-sum in [−127,127];
+    NO clamp exists anywhere
+[x] M, N free to 2²⁴ (pattern-period divisible); 16R ≤ K ≤ 4R², 64 | K,
+    K ≥ 1024; R ∈ {32…1024} pow2, 16 | R, ≥128 under penalty
 ```
 
-Method: read `miner_base` and, where reading is ambiguous, *run* it — the
-reference miner produces observable output at small sizes in a fifth of a
-second on this class of machine. A printed value beats an inferred one.
+Method used: read the consensus Rust, then **executed** it —
+`pearl_metal_miner/reference.py` reimplements the full pipeline in NumPy and
+`tools/phase05_experiments.py` has upstream's verifier accept our crafted
+proof, flip at our predicted difficulty boundary, and match miner_base's noise
+bytes. A printed value beats an inferred one; an accepted proof beats both.
 
-Update §2.1's table and `CONTEXT.md` as each lands. Write the tile-shape ADR at
-the end of this phase, when it can be recorded against evidence.
+One deliberate substitution: the plan named `miner_base` (Python) as the
+oracle. Phase 0.5 established that `zk-pow` (Rust, via `py-pearl-mining`) *is*
+the consensus verifier and `miner_base` mirrors it; the Rust is therefore the
+primary oracle everywhere below, with `miner_base` retained as an independent
+cross-check. Strictly stronger, same monorepo, same ISC licence.
 
 ---
 
@@ -650,14 +681,15 @@ debugging a correct-looking kernel.
 
 ## 8. Open questions
 
-1. **What shape is a hash tile, and in which endianness is the digest
-   compared?** ⚠️ Phase 0.5. Blocks everything.
+1. ~~What shape is a hash tile, and in which endianness is the digest
+   compared?~~ ✅ Answered 08-09: pattern-selected partition tile;
+   little-endian inclusive. §2.1, ADR-0007.
 2. **Which pool, at what difficulty, in what units?** ⚠️ Phase 1a.
 3. **How fast is Backend A really?** ⚠️ Estimated ~1 TH/s from hardware
    characteristics; measured in Phase 5 against the Phase 1c bar.
 4. **Does the desktop wallet require a heavy chain sync?** ⚠️ Phase 0.
-5. **Does `clamp_i8` ever fire?** ⚠️ Instrumented in Phase 3. If it fires,
-   re-read the noise model before trusting any bound.
+5. ~~Does `clamp_i8` ever fire?~~ ✅ Answered 08-09: no clamp exists in the
+   consensus path; ranges make one unnecessary. §2.3.
 6. **Do Apple8/Apple9 GPUs share this device's threadgroup limits?** ⚠️
    Unverifiable here; handled by querying at runtime rather than answering.
 

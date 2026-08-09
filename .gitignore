@@ -1,0 +1,8 @@
+.venv/
+pearl/
+__pycache__/
+*.pyc
+.DS_Store
+build/
+*.dylib
+.pytest_cache/
