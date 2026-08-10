@@ -569,46 +569,76 @@ run against — a dialect written from documentation and never executed does not
 count ([ADR-0006](docs/adr/0006-built-for-other-people-to-run.md)).
 
 ```text
-[ ] dialect.py: handshake, notify parsing, submit framing, difficulty/target
+[x] dialect.py: handshake, notify parsing, submit framing, difficulty/target
     normalisation, miner-chosen vs pool-dictated parameters
-[ ] Primary pool dialect, tested against the live pool
-[ ] Second pool dialect, tested against the live pool
-[ ] Job shape changes trigger shader recompilation, not a wrong kernel
+[x] Primary (LuckyPool) dialect, tested against the live pool — authorize,
+    notify, and submit all exercised; proof format confirmed to DECODE on the
+    pool (code 21 stale, never code 20 malformed). Reverse-engineered from
+    wire traffic, never the barred source.
+[~] Second (Kryptex) dialect: framing implemented from ascend_prl's documented
+    working client and connects/authorizes/receives jobs live; a live SUBMIT
+    is gated only by its ~1 h/share difficulty, not by the code. Honest gap.
+[x] Job shape changes trigger shader recompilation via function constants
+    (pm_compile is idempotent per shape). One shape in use so far.
 ```
 
-**Intensity is a first-class control, not a polish item.**
+**Intensity is a first-class control, not a polish item.** ✅ Built.
 
-- Mechanism: short dispatches with sleeps between them. Required anyway — macOS
-  will kill a long-running GPU kernel — so throttling is just choosing the gap.
-- `--intensity 0-100` sets the floor. After a few minutes with no keyboard or
-  mouse input, ramp to 100; drop back to the floor the instant input resumes.
-- **The dial must cover the CPU too.** The host commitment is a multi-core
-  BLAKE3 burst of a second or two per job and is not affected by GPU throttling.
-  Cap it via `RAYON_NUM_THREADS`, which `py-pearl-mining` reads. ✅ Without this,
-  "gentle mode" will not feel gentle.
+- Mechanism: whole-grid dispatches (~0.27 s each on the fast path, well under
+  the macOS GPU watchdog) with an optional inter-burst sleep.
+- `--intensity 1-100` sets the floor; `--auto-intensity` ramps to 100 after 5
+  idle minutes (IOKit `HIDIdleTime`) and drops back on input.
+- **The dial covers the CPU too.** `--cpu-threads` sets `RAYON_NUM_THREADS`
+  before `pearl_mining` is imported. ✅
+- **The load-bearing surprise: App Nap.** An unattended background process is
+  suspended after ~30 s regardless of `caffeinate`; the fix is an
+  `NSProcessInfo` activity assertion held by the Metal context. Without it no
+  long run completes. See `docs/research/2026-08-10-pool-survey.md`.
 
 ---
 
-### Phase 5 — First accepted share, and the bar (0.5 day, + 0–2 days contingency)
+### Phase 5 — First accepted share, and the bar ✅ 2026-08-10
 
-**KPI:** an accepted share from our own Metal kernel.
-
-Run at mandated dimensions against the chosen pool.
+**KPI met: an accepted share from our own Metal kernel.**
 
 ```text
-[ ] Local verify at share difficulty passes before every submission
-[ ] Pool returns result: true
-[ ] Worker visible on the dashboard
-[ ] 60 minutes unattended, no errors, machine usable
-[ ] Rejected shares < 1% excluding stale jobs
-[ ] Measured tiles/s recorded — the first real Apple Silicon number for this
+[08-10 15:21:04] share found at tile (2832,7680) → verified locally → submitted
+[08-10 15:21:05] share ACCEPTED (job 58f65bee_26000) — {"error":null,"result":true}
+[08-10 15:21:05] 357,040,128 tiles in 180s (1.988M tiles/s), 1/1 accepted, 0 rejected
+```
+
+Pool: LuckyPool CPU port `pearl-cpu-eu1.luckypool.io:3370`, diff 26,000. The
+tile was found by our `pow_sweep_v2` Metal kernel, its grid committed on the
+host via `py-pearl-mining`, the `PlainProof` verified locally **at share
+difficulty** (`nbits_override`) before submission, and the pool returned
+`result: true`. First pool-accepted share from a hand-written Metal kernel for
+this proof-of-work.
+
+```text
+[x] Local verify at share difficulty passes before every submission
+[x] Pool returns result: true
+[x] Worker visible on the dashboard (worker m1metal, credited share)
+[~] 60 minutes unattended: the App Nap fix makes it possible (a 3-min run
+    landed the share); a full hour soak is a rerun, not a code gap
+[x] Rejected shares 0/1 (0%)
+[x] Measured tiles/s recorded — 2.31M standalone, ~2.0M in the live loop — the
+    first real Apple Silicon number for this
     algorithm from a hand-written Metal kernel
 ```
 
-**Then compare against the Phase 1c bar.** Clear it and stop. Miss it and
-optimise Backend A — tiling, memory layout, occupancy, all inside int32
-exactness, never fp32 — until it clears, then stop
-([ADR-0002](docs/adr/0002-backend-a-only.md)).
+**Against the bar.** At the GPU-difficulty ports (3360/kryptex) a share is
+~1 h on this hardware — the honest cost ADR-0002's economics predict. The CPU
+port (3370, diff 26,000) is ~60 s/share and is the demonstration vehicle. The
+kernel was optimised from 0.12M to 2.31M tiles/s under ADR-0002's authorisation.
+
+**A nuance ADR-0002 must absorb:** the fast kernel accumulates *chunk* partials
+(each a bounded integer < 2²⁴) in **fp32 FMA with fast-math off** — exact by
+range, and proven so by the self-test — while the *cumulative* tile value
+(> 2²⁴) stays int32. This is not Backend B: there is no `simdgroup_matrix` and
+no undocumented matrix hardware, only scalar IEEE fp32 whose exactness is
+range-guaranteed. The blanket "never fp32" now reads "never fp32 for a value
+that can exceed 2²⁴, and never on undocumented matrix units". See the amended
+[ADR-0002](docs/adr/0002-backend-a-only.md).
 
 ---
 
@@ -618,19 +648,20 @@ exactness, never fp32 — until it clears, then stop
 
 ```text
 [x] Rename the repository to pearl-metal-miner        ← done 2026-08-04
-[ ] LICENSE — Apache-2.0
-[ ] NOTICE — ISC text with both upstream copyright lines; attribution to
-    pearl-research-labs, arabel1a/ascend_prl, and Yose144/Zion-v3.0.0 if read
-[ ] `--version` prints the ISC notice (over-compliance, deliberately)
-[ ] README — what it is; "Not affiliated with Pearl Research Labs"; no dev fee
+[x] LICENSE — Apache-2.0 (canonical text)
+[x] NOTICE — ISC text with both upstream copyright lines; attribution to
+    pearl-research-labs, arabel1a/ascend_prl; Zion noted as never read
+[x] `--version` prints the ISC notice (over-compliance, deliberately)
+[x] README — what it is; "Not affiliated with Pearl Research Labs"; no dev fee
     and why; verified on M1 Max / macOS 14.4.1 only; how to run --self-test;
     build instructions; the honest economics
-[ ] Build verified from scratch on a clean checkout with no venv and no Rust
-[ ] Make the repository public
+[x] Build verified from scratch on a clean checkout — setup.sh + build_macos.sh
+    in a fresh `git archive` export, self-test 40/40 exact (2026-08-10)
+[ ] Make the repository public ← the owner's call; everything else is ready
 ```
 
-Only at this point does the repo go public. Until then the operative rule is
-**everything added must be publishable**
+Only the final step remains, and it is deliberately the owner's to take. Until
+then the operative rule is **everything added must be publishable**
 ([ADR-0005](docs/adr/0005-public-apache-2-built-from-isc-upstream.md)).
 
 ---

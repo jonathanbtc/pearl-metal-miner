@@ -5,6 +5,23 @@
 > — under one economic argument. That argument survives for the first and not
 > the second. See **The amendment** below. Everything else stands.
 
+> **Amended 2026-08-10**, when the optimisation the earlier amendment authorised
+> was actually done and needed a sharper line than "never fp32". The shipped
+> fast kernel (`pow_sweep_v2`, 0.12M → 2.31M tiles/s) accumulates each **k-chunk
+> partial** in scalar **fp32 FMA with fast-math disabled**. This is exact, not
+> approximate: every partial is an integer of magnitude ≤ R·127² = 2,064,512,
+> comfortably below 2²⁴ where fp32 is integer-exact, and IEEE semantics are
+> guaranteed by `fastMathEnabled = NO`. The **cumulative** tile sum, which
+> exceeds 2²⁴ (up to 66,064,384), is held in **int32** exactly as before. The
+> self-test proves the whole kernel byte-identical to the reference, including
+> the ±127 adversarial cases that maximise the cumulative magnitude.
+>
+> So the rule is refined, not broken: **no `simdgroup_matrix` / undocumented
+> matrix hardware** (that was the real risk — Backend B), and **no fp32 for any
+> value that can exceed 2²⁴**. Scalar fp32 for a provably-bounded partial is
+> exact and permitted. "Never fp32 anywhere" was a proxy for "never risk a
+> silent rounding error"; the precise version of that is stated here.
+
 `Plan.md` specified two PoW kernels: Backend A (plain int32 arithmetic, exact by
 construction) and Backend B (Apple's `simdgroup_matrix` fp32 hardware, exact
 only if a numeric bound holds). We are building Backend A and nothing else.
