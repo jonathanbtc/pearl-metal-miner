@@ -303,6 +303,12 @@ def run(argv=None) -> int:
             time.sleep(5)
             try:
                 conn.connect()
+                job, grid = None, None  # wait for a fresh job on the new session
+                while job is None and not conn.dead.is_set():
+                    handle_events(block_s=1.0)
+                if job is not None:
+                    factory.request(job)
+                    log(f"reconnected; resumed on job {job.job_id}")
             except OSError as e:
                 log(f"reconnect failed: {e}")
             continue
@@ -342,6 +348,10 @@ def run(argv=None) -> int:
         t_burst = time.time() - t_burst
 
         for base_r, base_c in hits:
+            if conn.dead.is_set():
+                log(f"share at tile ({base_r},{base_c}) dropped: connection down "
+                    f"before submit")
+                break
             proof = grid.craft_proof(base_r, base_c)
             header = pm.IncompleteBlockHeader.from_bytes(job.header_bytes)
             ok, msg = verify_share(header, proof, job.target)
@@ -353,7 +363,7 @@ def run(argv=None) -> int:
             pending[msg_id] = job.job_id
             stats["sub"] += 1
             log(f"share found at tile ({base_r},{base_c}) → verified locally → "
-                f"submitted (msg {msg_id})")
+                f"submitted (msg {msg_id}) on job {job.job_id}")
 
         if row_cursor >= n_regions:
             grid = None  # grid exhausted; next iteration builds a fresh one

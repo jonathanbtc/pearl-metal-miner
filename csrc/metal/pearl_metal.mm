@@ -46,6 +46,7 @@ struct pm_ctx {
   id<MTLCommandQueue> queue;
   id<MTLComputePipelineState> pipelines[kNumKernels];
   id<MTLBuffer> dummy; // bound to unused optional buffer slots
+  id<NSObject> activity; // App Nap / timer-throttle suppression token
   pm_shape shape;
   bool compiled = false;
 };
@@ -61,6 +62,13 @@ pm_ctx *pm_create(char *err, size_t errlen) {
     }
     pm_ctx *ctx = new pm_ctx();
     ctx->device = devices[0];
+    // Without this, macOS App Nap suspends an unattended background miner
+    // after a minute — measured: full speed for ~30 s, then near-total stall.
+    // UserInitiated disables App Nap and idle system sleep; LatencyCritical
+    // also disables timer throttling. Held for the context's lifetime.
+    ctx->activity = [[NSProcessInfo processInfo]
+        beginActivityWithOptions:(NSActivityUserInitiated | NSActivityLatencyCritical)
+                          reason:@"pearl-metal-miner mining"];
     ctx->queue = [ctx->device newCommandQueue];
     ctx->dummy = [ctx->device newBufferWithLength:16
                                           options:MTLResourceStorageModeShared];
