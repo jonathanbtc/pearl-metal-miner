@@ -3,7 +3,7 @@
 // Consensus reference: zk-pow/src in pearl-research-labs/pearl (ISC), pinned
 // in PINNED_PEARL_COMMIT.txt; NumPy restatement in pearl_metal_miner/reference.py.
 // Every stage here is differentially tested against that reference — exact
-// integers, no tolerances (Plan.md §3).
+// integers, no tolerances.
 //
 // The job shape arrives as function constants (ADR-0004/0006): the compiler
 // folds k, r, h, w and both PeriodicPattern shapes into the code as literals.
@@ -40,8 +40,8 @@ inline uint col_pattern_offset(uint p) {
 }
 
 // ── Keyed BLAKE3, single 64-byte block ──────────────────────────────────────
-// The only BLAKE3 the GPU ever needs (Plan.md §2.2.5): message is exactly one
-// block, so flags = CHUNK_START|CHUNK_END|ROOT|KEYED_HASH, counter 0, len 64.
+// The only BLAKE3 the GPU ever needs: every message is exactly one block, so
+// flags = CHUNK_START|CHUNK_END|ROOT|KEYED_HASH, counter 0, len 64.
 
 constant uint B3_IV0 = 0x6A09E667u;
 constant uint B3_IV1 = 0xBB67AE85u;
@@ -114,7 +114,7 @@ kernel void blake3_64(device const uint *msgs [[buffer(0)]],  // count × 16 wor
   for (int i = 0; i < 8; i++) out[gid * 8 + i] = d[i];
 }
 
-// ── Noise generation (Plan.md §2.3; pearl_noise.rs) ─────────────────────────
+// ── Noise generation (pearl_noise.rs) ───────────────────────────────────────
 // Message: eight i32 slots with slot `prepend` ← 1+index, then the 32-byte
 // seed label. One digest yields 32 uniform bytes or 8 permutation pairs.
 
@@ -180,7 +180,7 @@ kernel void noise_apply(device const char *base [[buffer(0)]],
   out[gid.y * FC_K + gid.x] = (char)((int)base[gid.y * FC_K + gid.x] + noise);
 }
 
-// ── The PoW sweep (Plan.md §2.1; jackpot/helper.rs) ─────────────────────────
+// ── The PoW sweep (jackpot/helper.rs) ───────────────────────────────────────
 // One threadgroup per hash tile; one thread per tile element (h·w ≤ 256).
 // Per R-chunk: cooperative stage of the h and w operand slices, cumulative
 // int32 accumulate, XOR-reduce the tile, rotate-left-13-and-XOR into the

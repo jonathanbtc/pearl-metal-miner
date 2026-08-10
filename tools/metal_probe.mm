@@ -54,7 +54,7 @@ int main() {
         // 256 rows of K=4096, all operands at the int8 extreme -127 * -127.
         // Worst case per row: 127*127*4096 = 66,064,384 -- overflows fp32's exact
         // integer range (2^24) but sits comfortably inside int32. This is exactly
-        // the case Plan.md sec 3.2 says fp32 cannot represent.
+        // the magnitude fp32 cannot represent exactly.
         const uint32_t K = 4096, ROWS = 256;
         id<MTLBuffer> ba = [dev newBufferWithLength:ROWS*K options:MTLResourceStorageModeShared];
         id<MTLBuffer> bb = [dev newBufferWithLength:ROWS*K options:MTLResourceStorageModeShared];

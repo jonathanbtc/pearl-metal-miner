@@ -1,6 +1,6 @@
 # Public under Apache-2.0, built from ISC upstream; Muskwak is barred
 
-Supersedes [[0003-private-repo-and-no-dev-fee]], which is kept in place and
+Supersedes [ADR-0003](0003-private-repo-and-no-dev-fee.md), which is kept in place and
 marked superseded rather than deleted.
 
 ADR-0003 rested on a premise that research on 2026-08-04 found to be false: that
@@ -13,9 +13,12 @@ builds and verifies the proof, and `arabel1a/ascend_prl` (MIT) is an
 independently written Stratum implementation covering two pools.
 
 So there is no fee to remove, no personal-use exemption to rely on, and no
-requirement that this repo stay private. The full evidence, with verbatim
-licence texts and URLs, is in
-[`docs/research/2026-08-04-licensing-and-sources-for-a-public-metal-miner.md`](../research/2026-08-04-licensing-and-sources-for-a-public-metal-miner.md).
+requirement that this repo stay private. The licence survey behind this —
+verbatim licence texts and URLs for every candidate source, 2026-08-04 —
+established: upstream's root ISC LICENSE covers every path we depend on (its
+sub-project index lists the exceptions, none of which we touch), `ascend_prl`
+is MIT, `OpenJarvis` is Apache-2.0, and the two barred repositories share a
+custom fee licence whose scope ("derivative thereof") is undefined.
 
 ## What is decided
 
@@ -62,7 +65,7 @@ clean-room client has ever been written.
 reason is gone, so fee-free is now a choice rather than an inheritance. The
 ecosystem norm is a fee — Muskwak 2%, `minerjed` 2%, `ascend_prl` 1% — so this
 is a real decision. It goes the other way on the arithmetic in
-[[0002-backend-a-only]]: this machine earns about $0.06/day. One percent of that
+[ADR-0002](0002-backend-a-only.md): this machine earns about $0.06/day. One percent of that
 is not income, it is a rounding error that costs a paragraph of explanation and
 a quantity of goodwill.
 
@@ -87,7 +90,7 @@ here so it is not rediscovered as a surprise.
 
 ## Consequences
 
-**`Plan.md` §0.1 loses several of its citations.** Its evidence table sourced
+**The build plan loses several of its citations.** Its evidence table sourced
 the mandated dimensions, the `pow_key` identity, the digest bound and the
 miner-chooses-A-and-B property to Muskwak's files. Those facts are not
 un-known — but they are no longer *cited*, and under this ADR they cannot be
@@ -104,7 +107,7 @@ recorded against evidence rather than in anticipation of it.
 Research Labs (ISC — the algorithm, the oracle, the proof machinery),
 `arabel1a/ascend_prl` (MIT — the dialect abstraction insight), and
 `Yose144/Zion-v3.0.0` (MIT) if its kernel is read at all under
-[[0006-built-for-other-people-to-run]].
+[ADR-0006](0006-built-for-other-people-to-run.md).
 
 **The name is `pearl-metal-miner`** — renamed 2026-08-04, while the repo had no
 forks, no stars and no external links. Descriptive, findable, and unambiguously

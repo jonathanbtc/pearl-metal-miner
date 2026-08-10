@@ -44,7 +44,7 @@ Consequence for the kernel: the sweep enumerates
 `{o ∈ [0,m) : rows_pattern.offset_is_valid(o)} × {o ∈ [0,n) : cols…}`, and
 both dimensions must be multiples of the respective pattern periods.
 
-## What else Phase 0.5 nailed down (summary; details in Plan.md §2)
+## What else Phase 0.5 nailed down (summary)
 
 - **Digest comparison is little-endian**, inclusive (`hash ≤ bound`), settled
   twice: `noisy_gemm.py` and `U256::from_little_endian` in

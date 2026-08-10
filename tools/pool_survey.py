@@ -1,6 +1,6 @@
-"""Phase 1a — pool survey. Connect, handshake, log both directions verbatim.
+"""Pool survey: connect, handshake, log both directions verbatim.
 
-Throwaway by design (Plan.md Phase 1a). Submits nothing. The address used for
+Throwaway by design. Submits nothing. The address used for
 authorize is the example address printed in ascend_prl's README (format-valid);
 no shares are ever sent, so nothing is credited or debited anywhere.
 

@@ -1,6 +1,6 @@
 # This repo stays private, and the developer fee is removed
 
-> **Status: superseded by [[0005-public-apache-2-built-from-isc-upstream]]
+> **Status: superseded by [ADR-0005](0005-public-apache-2-built-from-isc-upstream.md)
 > (2026-08-04).** Its premise was that this project needed
 > `Muskwak/Open-Pearl-Miner`. It did not: `pearl-research-labs/pearl` is ISC and
 > supplies everything load-bearing. There is no fee to remove, no exemption to
@@ -32,6 +32,6 @@ it is required is the hard part, which is why it is written down here.
 
 Note also that this decision withdraws the project's only external
 justification. It earns nothing (see
-[[0002-backend-a-only]]) and now benefits nobody else either. It is being built
+[ADR-0002](0002-backend-a-only.md)) and now benefits nobody else either. It is being built
 because its owner wants it built, which is reason enough — but it should not be
 mistaken for anything more.

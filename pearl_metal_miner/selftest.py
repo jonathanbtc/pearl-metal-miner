@@ -340,7 +340,7 @@ def test_end_to_end(m: Metal, rng: np.random.Generator):
         pm.MatrixMerkleProof(tree_bt.get_multileaf_proof(lb), b_idx), None)
 
     # Verify at a share-difficulty-style override derived from the tile's own
-    # value — no `nbits_override`-free theatre (Plan.md §0.2).
+    # value — an override-free verify would check block difficulty (theatre).
     factor = ref.difficulty_factor(job.h, job.w, k, r)
     need = -(-tile_vals[best] // factor)
     nb = ref.target_to_nbits(need)

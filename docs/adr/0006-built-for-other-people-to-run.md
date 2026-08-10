@@ -1,9 +1,9 @@
 # This is built for other people to run
 
-Until 2026-08-04 this was a personal artifact. [[0003-private-repo-and-no-dev-fee]]
+Until 2026-08-04 this was a personal artifact. [ADR-0003](0003-private-repo-and-no-dev-fee.md)
 said so explicitly: *"It earns nothing and now benefits nobody else either. It is
 being built because its owner wants it built."* Going public under
-[[0005-public-apache-2-built-from-isc-upstream]] made "benefits somebody else"
+[ADR-0005](0005-public-apache-2-built-from-isc-upstream.md) made "benefits somebody else"
 possible for the first time, and we are choosing to intend it rather than let it
 happen by accident.
 
@@ -37,19 +37,18 @@ self-test.
 
 **Nothing hardcoded that a pool might dictate.** Tile height and width, rank and
 the row/column patterns come from the job. Because
-[[0004-no-xcode-runtime-shader-compilation]] already compiles MSL at process
+[ADR-0004](0004-no-xcode-runtime-shader-compilation.md) already compiles MSL at process
 start, these can be Metal *function constants*: the compiler folds them into the
 generated code exactly as if they had been literals, so portability costs no
 speed in the hottest loop in the project. That decision was taken to avoid a
 10 GB Xcode install and turns out to pay a second dividend.
 
-**Speed becomes a gate.** See the amendment in [[0002-backend-a-only]].
+**Speed becomes a gate.** See the amendment in [ADR-0002](0002-backend-a-only.md).
 
 ## What it costs
 
 The schedule roughly doubles, from 5–6 days to about 8.5–10.5. Most of the
-increase is the dialect seam and the second pool. `Plan.md` §6 carries the
-breakdown.
+increase is the dialect seam and the second pool.
 
 We are also not competing on the axis it first appears. `open-jarvis/OpenJarvis`
 (Apache-2.0, 8,288 stars) has publicly declared a native Metal kernel as future

@@ -2,7 +2,7 @@
 
 > **Amended 2026-08-04.** The decision and both its reasons stand — this is the
 > ADR the pivot strengthened rather than damaged. But it was written citing a
-> fork that is now barred ([[0005-public-apache-2-built-from-isc-upstream]]), so
+> fork that is now barred ([ADR-0005](0005-public-apache-2-built-from-isc-upstream.md)), so
 > its evidence is re-anchored below to ISC upstream. The decision itself is
 > unchanged.
 
@@ -41,7 +41,8 @@ GPU path is the thing to reach for, not a micro-optimisation of the host path.
 
 The host commitment is a multi-core BLAKE3 burst, so it is **not** affected by
 GPU throttling and must be capped separately for the intensity dial to mean
-anything. `py-pearl-mining` reads `RAYON_NUM_THREADS`. See `Plan.md` Phase 4.
+anything. `py-pearl-mining` reads `RAYON_NUM_THREADS`; the miner sets it
+before the import (see `--cpu-threads`).
 
 There is no CUDA API being mirrored, so there is no drop-in obligation to meet.
 The miner loop is ours and is written around this split from the start, rather

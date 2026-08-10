@@ -52,7 +52,7 @@ void pm_release(void *buf);
 int pm_blake3_64(pm_ctx *ctx, void *msgs, void *keys, void *out, uint32_t count,
                  char *err, size_t errlen);
 
-/* Noise generation (§2.3). seed/key are 32 bytes each.
+/* Noise generation. seed/key are 32 bytes each.
  * uniform: out is `rows`×R int8 (EAL or EBR table).
  * pairs:   out is k × (u32 first, u32 second). */
 int pm_noise_uniform(pm_ctx *ctx, const uint8_t *seed, const uint8_t *key,

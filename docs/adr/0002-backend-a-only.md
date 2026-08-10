@@ -1,6 +1,6 @@
 # Backend A only — no `simdgroup_matrix`, and optimisation only against a bar
 
-> **Amended 2026-08-04** by [[0006-built-for-other-people-to-run]]. This ADR
+> **Amended 2026-08-04** by [ADR-0006](0006-built-for-other-people-to-run.md). This ADR
 > originally bundled two decisions — *no Backend B* and *no optimisation phase*
 > — under one economic argument. That argument survives for the first and not
 > the second. See **The amendment** below. Everything else stands.
@@ -22,7 +22,7 @@
 > exact and permitted. "Never fp32 anywhere" was a proxy for "never risk a
 > silent rounding error"; the precise version of that is stated here.
 
-`Plan.md` specified two PoW kernels: Backend A (plain int32 arithmetic, exact by
+The build plan specified two PoW kernels: Backend A (plain int32 arithmetic, exact by
 construction) and Backend B (Apple's `simdgroup_matrix` fp32 hardware, exact
 only if a numeric bound holds). We are building Backend A and nothing else.
 
@@ -35,7 +35,7 @@ Speed is worth nothing here, so its risk buys nothing either.
 
 That risk was real. Because `simdgroup_matrix` has no integer type, Backend B
 accumulates in fp32 and is exact only while every partial stays under 2²⁴. At
-the true R of 256 (not the 128 `Plan.md` assumed) the margin is 4.06×, about two
+the true R of 256 (not the 128 originally assumed) the margin is 4.06×, about two
 spare bits — and the exactness argument further assumes IEEE semantics from
 undocumented Apple matrix hardware. A violation would not crash; it would
 silently produce rejected shares.
@@ -50,7 +50,7 @@ money, and does not care whether the coin is worth $0.26 or $2,600.
 
 **"No optimisation phase" does not survive.** Its whole argument was *"speed is
 worth nothing here"*, which was true when the audience was one person. Two
-things changed it under [[0006-built-for-other-people-to-run]]:
+things changed it under [ADR-0006](0006-built-for-other-people-to-run.md):
 
 1. **Speed gates the milestone.** The lowest difficulty LuckyPool advertises is
    2,000,000, and Backend A's ~1 TH/s is an estimate, not a measurement. If the
@@ -73,7 +73,7 @@ Backend A must be fast enough that a share arrives in reasonable time, and
 "fast enough" is now a number derived in Phase 1 rather than a hope. Phase 5
 measures against it.
 
-Backend B stays defined in [[../../CONTEXT.md]] so the term keeps its meaning.
+Backend B stays defined in [the glossary](../../CONTEXT.md) so the term keeps its meaning.
 If it is ever revisited, the fp32 exactness bound must be re-derived at the R
 in force at that time, and validated against the hardware, not the
 specification.

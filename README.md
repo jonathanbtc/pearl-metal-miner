@@ -174,6 +174,13 @@ mine through a closed lid or system sleep: keep the Mac plugged in and awake
 (e.g. Settings → Displays → Advanced, or `caffeinate -s` in another
 terminal).
 
+### Prefer to have an AI assistant do all this?
+
+[`PROMPT_FOR_AI_DEV.md`](PROMPT_FOR_AI_DEV.md) contains a ready-to-paste
+prompt for an AI coding agent (Claude Code, Cursor, Copilot Workspace, …)
+that walks a fresh Apple Silicon Mac through this entire setup — with the
+self-test as a hard gate — and starts mining politely.
+
 ---
 
 ## All flags
@@ -247,7 +254,6 @@ not a promise made.
 
 ## Design notes
 
-- `Plan.md` — the build plan, with a verification marker on every external claim.
 - `CONTEXT.md` — the domain glossary.
 - `docs/adr/` — the decisions and their reasoning, including why the barred
   fee-licensed repositories were never read (ADR-0005) and what a hash tile

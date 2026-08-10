@@ -3,18 +3,20 @@
 A bit-exact Apple Metal compute backend for the Pearl (PRL) proof-of-useful-work
 miner, built from the ISC-licensed `pearl-research-labs/pearl` upstream and
 targeting pool mining on Apple Silicon. See
-[[docs/adr/0005-public-apache-2-built-from-isc-upstream]] and
-[[docs/adr/0006-built-for-other-people-to-run]].
+[ADR-0005](docs/adr/0005-public-apache-2-built-from-isc-upstream.md) and
+[ADR-0006](docs/adr/0006-built-for-other-people-to-run.md).
 
 This glossary exists because the domain has several near-synonyms that are not
 synonyms, and confusing them has already produced one wrong design (see
-[[docs/adr/0002-backend-a-only]] and §0.2 of `Plan.md`).
+[ADR-0002](docs/adr/0002-backend-a-only.md)).
 
 **This file defines terms, not values.** Every concrete number — dimensions,
-rank, tile size, ranges — lives in `Plan.md`, where it carries a ✅/⚠️/❌ marker
-and a source. A bare constant in a glossary is an assertion with no evidence
-attached, and that is exactly how one unverified number came to be stated as
-settled fact in two documents while a third source contradicted it.
+rank, tile size, ranges — lives in the code (`pearl_metal_miner/reference.py`
+names each consensus constant next to the upstream source file it came from)
+and is enforced by the self-test. A bare constant in a glossary is an
+assertion with no evidence attached, and that is exactly how one unverified
+number came to be stated as settled fact in two documents while a third
+source contradicted it.
 
 ## Language
 
@@ -92,7 +94,7 @@ selected by the two **patterns** applied at a **base offset**, and the valid
 base offsets make the tiles partition the output matrix exactly — the
 partition is enforced by the verifier, so the search space per grid is fixed
 by consensus, not chosen by the miner. See
-[[docs/adr/0007-hash-tile-is-a-pattern-selected-partition]].
+[ADR-0007](docs/adr/0007-hash-tile-is-a-pattern-selected-partition.md).
 _Avoid_: tile alone (ambiguous with the k-tiling at R), block, output tile
 
 **Pattern**:
@@ -137,7 +139,7 @@ silently.
 **Backend A**:
 The Metal PoW kernel that does the contraction in plain int32 arithmetic. Exact
 by construction, and the only backend in scope.
-See [[docs/adr/0002-backend-a-only]].
+See [ADR-0002](docs/adr/0002-backend-a-only.md).
 
 **Backend B**:
 A hypothetical Metal PoW kernel using `simdgroup_matrix` fp32 hardware for
@@ -153,7 +155,7 @@ disagree, we are wrong.
 A user-facing command that runs the live differential against the **oracle** on
 the machine it is invoked on. It exists because we can verify one Mac and other
 people run others, and because a wrong kernel fails silently.
-See [[docs/adr/0006-built-for-other-people-to-run]].
+See [ADR-0006](docs/adr/0006-built-for-other-people-to-run.md).
 
 **Intensity**:
 How much of the machine's time the miner is allowed to take, across GPU and CPU

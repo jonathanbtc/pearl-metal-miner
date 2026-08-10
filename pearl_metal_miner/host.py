@@ -57,5 +57,6 @@ def share_nbits(pool_target: int) -> int:
 def verify_share(header: pm.IncompleteBlockHeader, proof: pm.PlainProof,
                  pool_target: int) -> tuple[bool, str]:
     """Local verification AT SHARE DIFFICULTY — never without the override
-    (Plan.md §0.2: without it the check is theatre)."""
+    (without it the verifier checks BLOCK difficulty and rejects perfectly
+    valid shares, making the check theatre)."""
     return pm.verify_plain_proof_v1(header, proof, nbits_override=share_nbits(pool_target))

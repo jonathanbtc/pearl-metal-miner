@@ -1,6 +1,6 @@
 # No Xcode: shaders are compiled at runtime from source
 
-`Plan.md` §0.3 lists the missing `metal` compiler as a hard blocker requiring a
+The build plan originally listed the missing `metal` compiler as a hard blocker requiring a
 full Xcode install (~10 GB, Apple ID, and a version ceiling imposed by macOS
 14.4.1). It is not a blocker. macOS ships the Metal shader compiler inside the
 Metal framework itself, so `newLibraryWithSource:` compiles MSL at runtime with
@@ -16,14 +16,14 @@ second of startup and is invisible against a mining run.
 
 > **Amended 2026-08-04.** The original reasoning for skipping a precompiled
 > shader library was that a private, personal project has no distribution
-> scenario ([[0003-private-repo-and-no-dev-fee]]). That premise is gone — the
+> scenario ([ADR-0003](0003-private-repo-and-no-dev-fee.md)). That premise is gone — the
 > project is published under
-> [[0005-public-apache-2-built-from-isc-upstream]] — but the decision is
+> [ADR-0005](0005-public-apache-2-built-from-isc-upstream.md) — but the decision is
 > **strengthened, not weakened**, and for a better reason than the original one.
 >
 > Runtime compilation is now load-bearing. Tile dimensions, rank and the pattern
 > may be dictated by the pool, so nothing about the job's shape can be hardcoded
-> ([[0006-built-for-other-people-to-run]]). Compiling at process start lets
+> ([ADR-0006](0006-built-for-other-people-to-run.md)). Compiling at process start lets
 > those arrive as Metal **function constants**, which the shader compiler folds
 > into the generated code exactly as if they had been literals — portability at
 > no cost in the hottest loop in the project. A precompiled `.metallib` could
@@ -33,7 +33,7 @@ second of startup and is invisible against a mining run.
 
 Phase 0 accordingly shrinks to installing Rust, which is still genuinely
 required: `py-pearl-mining` provides both the Merkle commitment this design
-depends on ([[0001-metal-port-covers-the-hot-loop-only]]) and the local proof
+depends on ([ADR-0001](0001-metal-port-covers-the-hot-loop-only.md)) and the local proof
 verifier.
 
 ## Consequences
@@ -44,7 +44,7 @@ and in one place rather than at first dispatch.
 
 Without Xcode there is no GPU debugger and no Metal System Trace. That was
 comfortable when optimisation was ruled out entirely; under the amended
-[[0002-backend-a-only]] optimisation is authorised if a measured bar is missed,
+[ADR-0002](0002-backend-a-only.md) optimisation is authorised if a measured bar is missed,
 and profiling blind is a poor way to spend that time. Installing Xcode 15.4
 remains the escape hatch, and it becomes the *expected* move if the bar is
 missed rather than a last resort. Nothing about the shipped artifact changes —
@@ -59,8 +59,8 @@ Recorded here because they are design constraints, not trivia:
 - **Threadgroup memory: 32,768 bytes.** The binding constraint on tiling.
 - Max threads per threadgroup: 1024.
 - `MTLCreateSystemDefaultDevice()` returns **nil** for a plain command-line
-  binary here. Use `MTLCopyAllDevices()[0]`. The skeleton in `Plan.md` §4 would
-  have failed on this at first run.
+  binary here. Use `MTLCopyAllDevices()[0]`. The originally planned skeleton
+  would have failed on this at first run.
 - An int8 × int8 → int32 multiply-accumulate over the full K = 4096 with every
   operand at ±127 returns exactly 66,064,384 — the worst case in the design, and
   the exact value §3.2 shows fp32 cannot represent. Backend A's arithmetic is
