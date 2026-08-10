@@ -347,12 +347,11 @@ kernel void pow_sweep_v2(device const char *an [[buffer(0)]],
 
   for (uint i = tid; i < S * 16u; i += S * 8u) tr[i] = 0u;
 
+  // This thread's cumulative int32 tile elements. These can exceed 2²⁴ and
+  // must stay integer; only the bounded per-chunk partials use fp32 (below).
   int acc[2][8];
   for (int a = 0; a < 2; a++)
     for (int b = 0; b < 8; b++) acc[a][b] = 0;
-  // Chunk partials accumulate in fp32 FMA. Exact by range: every partial is
-  // an integer of magnitude ≤ R·127² ≤ 2,064,512 < 2²⁴, and fast-math is off
-  // (IEEE). The CUMULATIVE sum (up to 66M > 2²⁴) stays in int32 below.
 
   const uint nthreads = S * 8u;      // 256
   for (uint t = 0; t < nchunks; t++) {

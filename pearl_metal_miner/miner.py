@@ -33,9 +33,10 @@ _early_env()
 import numpy as np  # noqa: E402
 import pearl_mining as pm  # noqa: E402
 
+from . import __version__  # noqa: E402
 from . import reference as ref  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
-from .metal_capi import JobShape, Metal  # noqa: E402
+from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
 from .stratum.dialect import Job, PoolConnection, ShareResult  # noqa: E402
 from .stratum.kryptex import KryptexDialect  # noqa: E402
 from .stratum.luckypool import LuckyPoolDialect  # noqa: E402
@@ -53,7 +54,7 @@ def log(*a):
 def hid_idle_seconds() -> float:
     """System idle time via IOKit (no dependencies). Returns 0 on failure so
     auto-intensity fails toward the polite floor, never toward full burn."""
-    import subprocess
+    import subprocess  # deferred: only --auto-intensity ever needs it
     try:
         out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"],
                              capture_output=True, text=True, timeout=5).stdout
@@ -89,7 +90,7 @@ class Engine:
         self.col_bases = np.array(shape.cols_pattern.valid_offsets(n_dim), dtype=np.uint32)
         self.cb_buf = m.from_numpy(self.col_bases)
         self.rb_slice = m.alloc(len(self.row_bases) * 4)
-        self.hits = m.alloc(4 + 8 * 4096)
+        self.hits = m.alloc(HITS_BUF_BYTES)
         self.n_tiles_grid = len(self.row_bases) * len(self.col_bases)
         # Blocked fast path: rows [0,32], cols [0..63], r ≤ 128, 64 | m and n.
         self.fast = (shape.rows_pattern.shape[0] == (32, 2)
@@ -126,21 +127,19 @@ class Engine:
             band_lo = idx * bands_per
             n_bands = min(bands_per, self.n_bands - band_lo)
             self.metal.pow_sweep2(self.an_buf, self.bnt_buf, band_lo, n_bands,
-                                  self.n_cb, a_seed, bound, self.hits, 4096, None)
+                                  self.n_cb, a_seed, bound, self.hits,
+                                  HITS_CAPACITY, None)
             n_tiles = n_bands * 32 * self.n_cb
         else:
             rb = self.row_bases[idx * region_rows:(idx + 1) * region_rows]
             self.rb_slice.array(np.uint32, (len(self.row_bases),))[:len(rb)] = rb
             self.metal.pow_sweep(self.an_buf, self.bnt_buf, self.rb_slice, len(rb),
                                  self.cb_buf, len(self.col_bases), a_seed, bound,
-                                 self.hits, 4096, None)
+                                 self.hits, HITS_CAPACITY, None)
             n_tiles = len(rb) * len(self.col_bases)
-        count = min(int(self.hits.array(np.uint32, (1,))[0]), 4096)
-        pairs = self.hits.array(np.uint32, (1 + 2 * 4096,))[1:1 + 2 * count]
+        count = min(int(self.hits.array(np.uint32, (1,))[0]), HITS_CAPACITY)
+        pairs = self.hits.array(np.uint32, (1 + 2 * HITS_CAPACITY,))[1:1 + 2 * count]
         return [(int(pairs[2 * i]), int(pairs[2 * i + 1])) for i in range(count)], n_tiles
-
-
-VERSION = "0.1.0"
 
 
 def _version_text() -> str:
@@ -149,7 +148,7 @@ def _version_text() -> str:
     if os.path.exists(notice):
         with open(notice) as f:
             isc = f.read()
-    return (f"pearl-metal-miner {VERSION} — Apache-2.0, no dev fee.\n"
+    return (f"pearl-metal-miner {__version__} — Apache-2.0, no dev fee.\n"
             f"Not affiliated with Pearl Research Labs.\n\n{isc}")
 
 
@@ -268,6 +267,9 @@ def run(argv=None) -> int:
     t_start = time.time()
 
     def handle_events(block_s: float = 0.0):
+        """Drain the pool event queue: record share verdicts, adopt the newest
+        job. Returns True if `job` changed (waits up to block_s for the first
+        event)."""
         nonlocal job
         newest: Job | None = None
         try:
@@ -303,6 +305,7 @@ def run(argv=None) -> int:
             time.sleep(5)
             try:
                 conn.connect()
+                pending.clear()  # old submissions will never be answered
                 job, grid = None, None  # wait for a fresh job on the new session
                 while job is None and not conn.dead.is_set():
                     handle_events(block_s=1.0)
@@ -319,7 +322,12 @@ def run(argv=None) -> int:
             log("accepted-share target reached")
             break
 
-        new_job = handle_events()
+        # A refused job leaves `job` as None; block briefly on the event queue
+        # until the pool sends a usable one rather than spinning (or crashing
+        # on job.target below).
+        new_job = handle_events(block_s=1.0 if job is None else 0.0)
+        if job is None:
+            continue
         if new_job or grid is None:
             bound_int = job.target * factor
             if bound_int >= 1 << 256:

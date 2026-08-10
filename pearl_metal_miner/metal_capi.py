@@ -16,6 +16,12 @@ from . import reference as ref
 
 _DYLIB = os.path.join(os.path.dirname(__file__), "..", "build", "libpearlmetal.dylib")
 
+# The hits buffer the sweep kernels write: one u32 count, then up to
+# HITS_CAPACITY (u32 base_r, u32 base_c) pairs. The GPU-side count may exceed
+# the capacity (it counts every win); only the first HITS_CAPACITY are stored.
+HITS_CAPACITY = 4096
+HITS_BUF_BYTES = 4 + 8 * HITS_CAPACITY
+
 
 class ShapeStruct(C.Structure):
     _fields_ = [

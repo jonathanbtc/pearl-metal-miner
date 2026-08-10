@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 
+from .. import __version__
 from .dialect import Dialect, Job, ShareResult
 
 
@@ -30,7 +31,7 @@ class LuckyPoolDialect(Dialect):
         return [
             {"id": 2, "method": "mining.authorize",
              "params": {"wallet": address, "worker": worker,
-                        "agent": "pearl-metal-miner/0.1"}},
+                        "agent": f"pearl-metal-miner/{__version__}"}},
         ]
 
     def parse(self, line: str):

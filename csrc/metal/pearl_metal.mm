@@ -336,8 +336,8 @@ int pm_pow_sweep2(pm_ctx *ctx, void *an, void *bnt, uint32_t band_lo,
   Bytes32 seed32, bound32;
   memcpy(seed32.b, a_seed, 32);
   memcpy(bound32.b, bound, 32);
-  uint32_t params2[2] = {band_lo, n_col_bases};
-  uint32_t p2a = params2[0], p2b = params2[1];
+  // Blocks cannot capture C arrays; capture scalars and rebuild inside.
+  const uint32_t p2a = band_lo, p2b = n_col_bases;
   return run(
       ctx, 5, MTLSizeMake(n_col_bases, n_bands, 1), MTLSizeMake(256, 1, 1), 0, true,
       ^(id<MTLComputeCommandEncoder> enc) {

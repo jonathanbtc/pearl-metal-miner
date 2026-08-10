@@ -66,17 +66,31 @@ class PoolConnection:
         self.events: queue.Queue = queue.Queue()
         self.dead = threading.Event()
         self.log = log
-        self._msg_id = 10
+        self._msg_id = 10  # submit ids start above any handshake id
         self._sock: socket.socket | None = None
         self._lock = threading.Lock()
 
     def connect(self):
-        self._sock = socket.create_connection((self.host, self.port), timeout=20)
-        self._sock.settimeout(None)
+        """Open a fresh session. Safe to call again after `dead` is set: the
+        old socket is closed (which unblocks a reader still stuck in recv on
+        it), and each reader is bound to its own socket so a lingering old
+        reader can never consume from — or kill — the new session."""
+        old, self._sock = self._sock, None
+        if old is not None:
+            try:
+                old.close()
+            except OSError:
+                pass
+        sock = socket.create_connection((self.host, self.port), timeout=20)
+        sock.settimeout(None)
+        # A miner runs for days; without keepalive a silently dropped route
+        # leaves recv blocked forever and the miner sweeping into the void.
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        self._sock = sock
         self.dead.clear()
         for msg in self.dialect.handshake_lines(self.address, self.worker):
             self.send(msg)
-        t = threading.Thread(target=self._reader, daemon=True)
+        t = threading.Thread(target=self._reader, args=(sock,), daemon=True)
         t.start()
 
     def send(self, msg: dict):
@@ -97,11 +111,11 @@ class PoolConnection:
                                            job_id, proof_b64))
         return self._msg_id
 
-    def _reader(self):
+    def _reader(self, sock: socket.socket):
         buf = b""
         try:
             while not self.dead.is_set():
-                chunk = self._sock.recv(65536)
+                chunk = sock.recv(65536)
                 if not chunk:
                     break
                 buf += chunk
@@ -119,5 +133,6 @@ class PoolConnection:
         except OSError:
             pass
         finally:
-            self.dead.set()
-            self.log("[stratum] connection closed")
+            if sock is self._sock:  # a superseded reader must not kill the new session
+                self.dead.set()
+                self.log("[stratum] connection closed")

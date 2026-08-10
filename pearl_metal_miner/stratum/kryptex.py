@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 
+from .. import __version__
 from .dialect import Dialect, Job, ShareResult
 
 
@@ -30,7 +31,7 @@ class KryptexDialect(Dialect):
     def handshake_lines(self, address, worker):
         return [
             {"id": 1, "method": "mining.subscribe",
-             "params": ["pearl-metal-miner/0.1"]},
+             "params": [f"pearl-metal-miner/{__version__}"]},
             {"id": 3, "method": "mining.authorize",
              "params": [f"{address}.{worker}", "x"]},
         ]

@@ -31,7 +31,7 @@ import blake3
 import numpy as np
 
 from . import reference as ref
-from .metal_capi import Buf, JobShape, Metal
+from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal
 
 CHECKS = {"pass": 0, "fail": 0}
 
@@ -130,8 +130,8 @@ def _sweep(m: Metal, job: JobShape, an, bnt, a_seed: bytes, bound: bytes,
     n_tiles = len(rows_b) * len(cols_b)
     anb, bntb = m.from_numpy(an.astype(np.int8)), m.from_numpy(bnt.astype(np.int8))
     rb, cb = m.from_numpy(rows_b), m.from_numpy(cols_b)
-    hits = m.alloc(4 + 8 * 4096)
-    hits.array(np.uint32, (1 + 2 * 4096,))[...] = 0
+    hits = m.alloc(HITS_BUF_BYTES)
+    hits.array(np.uint32, (1 + 2 * HITS_CAPACITY,))[...] = 0
     dig = m.alloc(n_tiles * 32)
     bufs = [anb, bntb, rb, cb, hits, dig]
     if debug:
@@ -139,11 +139,11 @@ def _sweep(m: Metal, job: JobShape, an, bnt, a_seed: bytes, bound: bytes,
         cs = m.alloc(n_tiles * nchunks * job.h * job.w * 4)
         tr = m.alloc(n_tiles * nchunks * 16 * 4)
         m.pow_sweep_debug(anb, bntb, rb, len(rows_b), cb, len(cols_b), a_seed, bound,
-                          hits, 4096, dig, cs, tr)
+                          hits, HITS_CAPACITY, dig, cs, tr)
         bufs += [cs, tr]
         return rows_b, cols_b, hits, dig, cs, tr, bufs
     m.pow_sweep(anb, bntb, rb, len(rows_b), cb, len(cols_b), a_seed, bound,
-                hits, 4096, dig)
+                hits, HITS_CAPACITY, dig)
     return rows_b, cols_b, hits, dig, None, None, bufs
 
 
@@ -238,10 +238,11 @@ def test_pow_v2(m: Metal, rng: np.random.Generator):
         anb, bntb = m.from_numpy(an), m.from_numpy(bnt)
         n_bands, n_cb = m_dim // 64, n_dim // 64
         n_tiles = n_bands * 32 * n_cb
-        hits = m.alloc(4 + 8 * 4096)
+        hits = m.alloc(HITS_BUF_BYTES)
         hits.array(np.uint32, (1,))[0] = 0
         dig = m.alloc(n_tiles * 32)
-        m.pow_sweep2(anb, bntb, 0, n_bands, n_cb, a_seed, b"\xff" * 32, hits, 4096, dig)
+        m.pow_sweep2(anb, bntb, 0, n_bands, n_cb, a_seed, b"\xff" * 32, hits,
+                     HITS_CAPACITY, dig)
         gpu = dig.array(np.uint8, (n_bands * 32, n_cb, 32)).copy()
         _, _, want = _reference_digests(an.astype(np.int32), bnt.astype(np.int32),
                                         job, m_dim, n_dim, a_seed)
@@ -320,7 +321,7 @@ def test_end_to_end(m: Metal, rng: np.random.Generator):
     _check(f"e2e: GPU hit count equals reference win count at median bound "
            f"({count} hits / {len(values)} tiles)", count == want_wins)
 
-    pairs = hits.array(np.uint32, (1 + 2 * 4096,))[1:1 + 2 * count].reshape(count, 2)
+    pairs = hits.array(np.uint32, (1 + 2 * HITS_CAPACITY,))[1:1 + 2 * count].reshape(count, 2)
     tile_vals = {}
     for i, tr_b in enumerate(rows_b):
         for j, tc_b in enumerate(cols_b):
