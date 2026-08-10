@@ -13,7 +13,6 @@ is why this module sets it at the very top.
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import queue
 import sys
@@ -35,6 +34,7 @@ import pearl_mining as pm  # noqa: E402
 
 from . import __version__  # noqa: E402
 from . import reference as ref  # noqa: E402
+from . import wallet  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
 from .stratum.dialect import Job, PoolConnection, ShareResult  # noqa: E402
@@ -197,7 +197,8 @@ def run(argv=None) -> int:
     ap.add_argument("--pool", choices=sorted(DIALECTS), default="kryptex")
     ap.add_argument("--host")
     ap.add_argument("--port", type=int)
-    ap.add_argument("--address", help="your PRL address (prl1p…)")
+    ap.add_argument("--address", help="payout address (prl1p…); default: the "
+                                      "local wallet.json, if you created one")
     ap.add_argument("--worker", default="m1")
     ap.add_argument("--m", type=int, default=8192)
     ap.add_argument("--n", type=int, default=8192)
@@ -230,14 +231,26 @@ def run(argv=None) -> int:
         from . import selftest
         return selftest.run()
 
-    if not args.address:
-        burner = os.path.join(os.path.dirname(__file__), "..", "burner_wallet.json")
-        if os.path.exists(burner):
-            with open(burner) as f:
-                args.address = json.load(f)["address"]
-            log(f"no --address given; using TESTING burner address {args.address}")
-        else:
-            ap.error("--address required (or run tools/make_burner_wallet.py)")
+    # A bad payout address is this domain's silent failure at its worst —
+    # value mined to an address nobody can claim — so refuse it before the
+    # first byte reaches the pool.
+    if args.address:
+        try:
+            args.address = wallet.validate_payout_address(args.address)
+        except ValueError as e:
+            ap.error(f"--address: {e}")
+    else:
+        try:
+            found = wallet.payout_address_from_disk()
+        except ValueError as e:
+            ap.error(str(e))
+        if found is None:
+            ap.error("--address required — or create a local payout wallet once "
+                     "with: python -m pearl_metal_miner.wallet new")
+        args.address, wallet_path = found
+        log(f"no --address given; paying the local wallet {args.address} "
+            f"(from {os.path.basename(wallet_path)} — that file is the only "
+            f"claim on anything mined; back it up)")
 
     shape = JobShape(
         k=args.k, r=args.rank,

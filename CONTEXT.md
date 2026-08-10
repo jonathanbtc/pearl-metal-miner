@@ -161,3 +161,21 @@ See [ADR-0006](docs/adr/0006-built-for-other-people-to-run.md).
 How much of the machine's time the miner is allowed to take, across GPU and CPU
 both. A first-class, user-facing control, because this machine has to stay
 usable while it mines.
+
+**Payout address**:
+The taproot address shares are credited to — the field the object dialects
+call `wallet` on the wire. Validated locally before any connection, because a
+mistyped address mines value nobody can claim. The format authority is the
+upstream gateway's address decoder, restated with source citations in
+`pearl_metal_miner/wallet.py`.
+_Avoid_: wallet (ambiguous with the **wallet file**)
+
+**Wallet file**:
+`wallet.json` — a bare keypair (payout address + private key) created by
+`python -m pearl_metal_miner.wallet new`, and the miner's default payee when
+`--address` is omitted. Possession of the file is ownership of anything mined
+to its address: it is a secret to back up, not a wallet app — it receives,
+and spending means importing its key elsewhere. The pre-release name
+`burner_wallet.json` is still honoured. See
+[ADR-0008](docs/adr/0008-included-wallet-is-a-bare-keypair.md).
+_Avoid_: burner wallet (pre-release term), wallet app

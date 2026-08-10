@@ -6,5 +6,6 @@ __pycache__/
 build/
 *.dylib
 .pytest_cache/
+wallet.json
 burner_wallet.json
 csrc/metal/kernels_embedded.h

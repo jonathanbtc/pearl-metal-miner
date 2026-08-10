@@ -6,16 +6,18 @@ your first message. It works best if you start the agent inside an empty
 folder (or inside a clone of this repo — the prompt handles both).
 
 Replace `YOUR_PRL_ADDRESS` at the top with your own `prl1p…` address, or
-leave it as-is and the agent will create a throwaway test wallet for you.
+leave it as-is and the agent will create a local wallet for you with the
+repo's included wallet tool.
 
 ```text
 I want you to set up and run pearl-metal-miner
 (https://github.com/jonathanbtc/pearl-metal-miner) on this Mac, end to end.
 
 My payout address: YOUR_PRL_ADDRESS
-(If that still says YOUR_PRL_ADDRESS, I don't have one yet — generate the
-testing burner wallet in step 5 instead, tell me you did, and remind me at
-the end that mined funds go to that local test wallet until I replace it.)
+(If that still says YOUR_PRL_ADDRESS, I don't have one yet — create the
+local wallet in step 5 instead, tell me you did, and remind me at the end
+that wallet.json holds the only key to anything mined and must be backed
+up.)
 
 Known facts, so you don't have to rediscover them:
 
@@ -44,15 +46,17 @@ Do this, in order, telling me briefly what you did at each step:
 
 4. THE GATE — run the self-test:
    `.venv/bin/python -m pearl_metal_miner.miner --self-test`
-   It must print SELF-TEST PASS (about 40 exact-integer checks of every GPU
-   stage against the reference implementation). If it fails: STOP. Do not
+   It must print SELF-TEST PASS (about 50 exact-integer checks of the wallet
+   codec and every GPU stage against the reference implementation). If it
+   fails: STOP. Do not
    mine, do not work around it. Show me the full output and the exact
    failing stage — a failed self-test means shares would be silently
    rejected and electricity wasted.
 
 5. Wallet. If I gave you a real prl1p… address above, use it. Otherwise run
-   `.venv/bin/python tools/make_burner_wallet.py` once, and tell me clearly
-   that burner_wallet.json now holds the private key and must be kept safe.
+   `.venv/bin/python -m pearl_metal_miner.wallet new` once, and tell me
+   clearly that wallet.json now holds the private key — the only claim on
+   anything mined — and must be kept secret and backed up.
 
 6. Start mining, politely, so I can keep using the machine:
    `.venv/bin/python -m pearl_metal_miner.miner --pool luckypool \

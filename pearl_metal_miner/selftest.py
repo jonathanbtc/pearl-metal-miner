@@ -7,6 +7,12 @@ We verified an M1 Max; your machine verifies itself here (ADR-0006).
 
 Stages, each exact — a single differing integer fails the run:
 
+  0. wallet     host-side payout codec: key→address against vectors
+                differentially generated from `bitcoinutils` 0.8.2 (the
+                library upstream's gateway pays addresses with) and
+                upstream's own coinbase fixture, 2026-08-10, re-runnable via
+                tools/wallet_differential.py; the address validator's reject
+                paths; and the local wallet file, if one exists
   1. blake3     GPU keyed BLAKE3 (64-byte blocks) vs the `blake3` library
   2. noise      GPU uniform tables + permutation pairs + noised operands vs
                 the NumPy reference (itself pinned to upstream by
@@ -24,6 +30,8 @@ Exit code 0 with "SELF-TEST PASS" on success; non-zero otherwise.
 
 from __future__ import annotations
 
+import os
+import secrets
 import sys
 import time
 
@@ -31,6 +39,7 @@ import blake3
 import numpy as np
 
 from . import reference as ref
+from . import wallet
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal
 
 CHECKS = {"pass": 0, "fail": 0}
@@ -58,6 +67,73 @@ def _job(shape_row) -> tuple[JobShape, int, int]:
                  cols_pattern=ref.Pattern.from_list(cols)),
         m, n,
     )
+
+
+# Key→address vectors, generated 2026-08-10 by tools/wallet_differential.py:
+# each private key run through an independent BIP-341 implementation
+# (`bitcoinutils` 0.8.2 — the library upstream's gateway uses) produced the
+# identical witness program, and upstream's gateway decoder returned exactly
+# 5120‖program for each address. Keys are BIP-340 even-Y normalised — and
+# published here, so these are burned test keys: never mine to them.
+WALLET_VECTORS = [
+    ("33ece10a66420c4097c8c6f49bac05899b7d8dc8cf503d7202860cdd5b9cc965",
+     "prl1pmc2s6zx50hyk2rcjn236jhg84jn9gswexwkwjpm9n5s3vvphx5mslmmuz3"),
+    ("86d9a5994ef5db96b94921e36ac9eae692ec732e4c0e3076ccf98e920a60c2ad",
+     "prl1pd8vsujrh8ktkum4xkxrg7ug2qr60k3lqarex8ulwx09uqpazjgrq9sz5ap"),
+    ("c6bcd7838de549832466c6c86c5291f9368caed486624eb02aa4db87d90543b7",
+     "prl1pnr59m0fwyxse08lv7c4eyckd9snyc65709ezwded8ccayhm0pq9s29xq7h"),
+    ("6479fab62c587a9c3f1a7756178a8fca3a8189e6d0d6adfb4c86b8f2d1a90d96",
+     "prl1p7js9pasfc539vpswjsw5vz9u8t2c00a9p6j4839k77ysvg5qpjnsfs6wle"),
+]
+
+# The witness program inside upstream's own coinbase fixture
+# (pearl-gateway/tests/test_blockchain_utils.py, scriptPubKey 5120‖program).
+UPSTREAM_FIXTURE_PROGRAM = "8635cb51e0601a2f55b17b1ba41b21a511b3753a0bf4610bd52eb1a15d69a281"
+
+
+def test_wallet():
+    for i, (key_hex, addr) in enumerate(WALLET_VECTORS):
+        norm, derived = wallet.derive_address(int(key_hex, 16))
+        _check(f"key→address differential vector {i}",
+               derived == addr and f"{norm:064x}" == key_hex,
+               "" if derived == addr else f"derived {derived}")
+
+    fix = bytes.fromhex(UPSTREAM_FIXTURE_PROGRAM)
+    _check("upstream coinbase fixture round-trips through our codec",
+           wallet.decode_payout_address(wallet.encode_address(fix)) == fix)
+
+    _, fresh = wallet.derive_address(secrets.randbelow(wallet.N - 1) + 1)
+    _check("fresh key round-trip (derive → validate → decode)",
+           wallet.validate_payout_address(fresh.upper()) == fresh)
+
+    # The validator must reject, loudly, everything the chain cannot pay —
+    # a mistyped address that slipped through would mine unclaimable value.
+    data5 = [1] + wallet._convertbits(fix, 8, 5)
+    pm = wallet._bech32_polymod(wallet._hrp_expand("prl") + data5 + [0] * 6) ^ 1
+    bech32_not_m = "prl1" + "".join(
+        wallet.CHARSET[d] for d in data5 + [(pm >> 5 * (5 - i)) & 31 for i in range(6)])
+    good = WALLET_VECTORS[0][1]
+    rejects = [
+        ("a one-character typo", good[:-1] + ("q" if good[-1] != "q" else "p")),
+        ("a bech32 (not bech32m) encoding", bech32_not_m),
+        ("a Bitcoin address", wallet.encode_address(fix, hrp="bc")),
+        ("a non-taproot witness version", wallet.encode_address(fix, witver=0)),
+        ("a truncated program", wallet.encode_address(fix[:16])),
+    ]
+    for what, bad_addr in rejects:
+        try:
+            wallet.validate_payout_address(bad_addr)
+            _check(f"validator rejects {what}", False, "was accepted")
+        except ValueError:
+            _check(f"validator rejects {what}", True)
+
+    found = wallet.find_wallet_file()
+    if found is None:
+        print("  (no local wallet file — nothing on disk to check)")
+        return
+    bad = [c for c in wallet.verify_wallet(found) if not c[1]]
+    _check(f"local wallet file re-derives from its key ({os.path.basename(found)})",
+           not bad, bad[0][0] if bad else "")
 
 
 def test_blake3(m: Metal, rng: np.random.Generator, cases: int = 1024):
@@ -361,6 +437,8 @@ def run(seed: int = 0) -> int:
     print("pearl-metal-miner self-test")
     print("Every check is an exact integer comparison; any mismatch fails the run.")
     rng = np.random.default_rng(seed)
+    print("stage 0: payout wallet and address codec (host)")
+    test_wallet()
     try:
         mtl = Metal()
     except Exception as e:  # noqa: BLE001

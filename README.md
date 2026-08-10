@@ -97,24 +97,39 @@ what changed. Everything it creates lives inside this folder (`.venv/`,
 .venv/bin/python -m pearl_metal_miner.miner --self-test
 ```
 
-Expected: ~40 `[ok ]` lines and `SELF-TEST PASS`. If it fails, don't mine —
+Expected: ~50 `[ok ]` lines and `SELF-TEST PASS`. If it fails, don't mine —
 see [Troubleshooting](#troubleshooting).
 
 ### 4. Get an address to mine to
 
-Mining pays a Pearl address (they look like `prl1p…`). Use the receive
-address of your own Pearl wallet.
-
-Just testing the pipeline? Generate a throwaway wallet:
+Mining pays a Pearl address (they look like `prl1p…`). If you already run a
+Pearl wallet, use its receive address in step 5. Otherwise the repo includes
+everything needed to make one — nothing else to install:
 
 ```sh
-.venv/bin/python tools/make_burner_wallet.py
+.venv/bin/python -m pearl_metal_miner.wallet new
 ```
 
-This writes `burner_wallet.json` (address + private key) into the repo
-folder, prints the address, and the miner will use it automatically whenever
-you omit `--address`. The file is gitignored; treat it as a secret — the
-private key is what lets you claim anything mined to it.
+This generates a keypair locally, writes it to `wallet.json` (file mode
+0600, gitignored), prints your payout address, and the miner uses it
+automatically whenever you omit `--address`. Three things to understand:
+
+- **The file is the money.** The private key in `wallet.json` is the only
+  claim on anything mined to the address. Back the file up; if the only copy
+  is lost, the funds are lost with it. For amounts you'd mind losing, prefer
+  an established Pearl wallet's address instead.
+- **It receives; it doesn't spend.** This is a key file, not a wallet app —
+  no balances, no sending. To spend later, import the private key
+  (`… wallet show --reveal-private-key`) into any taproot-capable wallet.
+- **It's checked like everything else here.** The key→address derivation is
+  differentially tested in `--self-test` (stage 0, against the address
+  library upstream's own gateway uses), every address — yours included — is
+  validated before the miner connects (a typo would otherwise mine value
+  nobody can claim), and `… wallet verify` re-checks the file any time.
+
+(Checkouts from before 2026-08-10 created `burner_wallet.json` via
+`tools/make_burner_wallet.py`. That file keeps working as-is, and the old
+tool now forwards here.)
 
 ### 5. Mine
 
@@ -188,7 +203,7 @@ self-test as a hard gate — and starts mining politely.
 | flag | default | meaning |
 | ---- | ------- | ------- |
 | `--pool {kryptex,luckypool}` | `kryptex` | which pool dialect + endpoint |
-| `--address prl1p…` | burner fallback | payout address (required for real mining) |
+| `--address prl1p…` | your `wallet.json` | payout address, validated before connecting |
 | `--worker NAME` | `m1` | worker label shown on the pool dashboard |
 | `--host`, `--port` | per pool | override the pool endpoint |
 | `--intensity 1-100` | `100` | GPU duty cycle |
@@ -217,6 +232,7 @@ just usually slower.
 | `Rust not found` | install rustup (step 1), open a new terminal, rerun `setup.sh` |
 | `no Metal devices` | Intel Mac or VM — not supported |
 | self-test **FAIL** | do not mine. Rerun once; if it persists, open a GitHub issue with the full output, your chip and macOS version — the failing stage names the exact kernel |
+| `--address: …` rejected at startup | deliberate — the miner refuses to mine to an address the chain cannot pay (typo, wrong coin, wrong type). Re-paste it, or `… wallet show` prints your local one |
 | `connection died before first job` / connect errors | pool down, or a firewall/VPN blocking the port; try the other pool, or `--host`/`--port` for a different region |
 | `connection lost; reconnecting in 5s` | normal on flaky networks; it reconnects and resumes on a fresh job |
 | shares `0/0` for a long time | normal — see step 6; check the pool dashboard shows your worker as connected |
@@ -228,6 +244,14 @@ just usually slower.
 
 **Is there a fee?** No. At these economics a fee would be a rounding error
 that costs more goodwill than it earns.
+
+**Do I need to install a separate wallet?** No — step 4's included command
+creates a local payout wallet: a real keypair, generated on your machine
+with the OS's cryptographic randomness, its key→address math differentially
+tested against the same address library upstream's gateway pays with. What
+it is *not* is a wallet app: it shows no balance and sends nothing (the pool
+dashboard shows what you've earned; spending means importing the key into a
+taproot-capable wallet). It holds funds as safely as you hold its file.
 
 **Why would a share be accepted at all if the code were wrong?** It wouldn't
 — that's the design. Every stage is differentially tested against upstream's
@@ -256,8 +280,9 @@ not a promise made.
 
 - `CONTEXT.md` — the domain glossary.
 - `docs/adr/` — the decisions and their reasoning, including why the barred
-  fee-licensed repositories were never read (ADR-0005) and what a hash tile
-  actually is (ADR-0007).
+  fee-licensed repositories were never read (ADR-0005), what a hash tile
+  actually is (ADR-0007), and why the included wallet is a bare key file
+  rather than a wallet app (ADR-0008).
 - `pearl_metal_miner/reference.py` — the NumPy restatement of the consensus
   PoW every kernel is differentially tested against; itself pinned to
   upstream by `tools/phase05_experiments.py`.
