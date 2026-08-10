@@ -55,7 +55,7 @@ that's what the self-test is for.
 | Mac with Apple Silicon (M1 or newer) | the kernels are Metal, unified-memory | `uname -m` → `arm64` |
 | macOS 14+ (earlier may work, untested) | Metal runtime shader compilation | `sw_vers` |
 | Xcode **Command Line Tools** (not Xcode) | `clang++` for the host library | `xcode-select -p` |
-| Python **3.12 or newer** | the upstream extension targets abi3-py312 | `python3 --version` |
+| Python **3.12 or newer** | the upstream extension targets abi3-py312 | `python3 --version` (a versioned `python3.12`/`3.13`/`3.14` on PATH also counts — `setup.sh` finds them) |
 | Rust (cargo) | builds upstream's `py-pearl-mining` once | `cargo --version` |
 | ~2 GB disk, ~1.5 GB free RAM while mining | upstream clone + two 8192×4096 grids | |
 
@@ -69,7 +69,7 @@ supported — the self-test will tell you immediately.
 xcode-select --install
 
 # Python 3.12+, if `python3 --version` is older — e.g. via Homebrew:
-brew install python@3.12
+brew install python@3.12   # @3.13 / @3.14 equally fine
 # (no Homebrew? https://brew.sh, or the installer from python.org)
 
 # Rust, if you don't have it:
@@ -83,7 +83,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 git clone https://github.com/jonathanbtc/pearl-metal-miner.git
 cd pearl-metal-miner
 
-./packaging/setup.sh        # venv + deps, clones upstream (pinned), builds py-pearl-mining
+./packaging/setup.sh        # venv + deps, upstream at the pinned commit, builds py-pearl-mining
 ./packaging/build_macos.sh  # compiles build/libpearlmetal.dylib (clang++ only, seconds)
 ```
 
@@ -228,8 +228,8 @@ just usually slower.
 
 | symptom | cause / fix |
 | ------- | ----------- |
-| `python >= 3.12 required` | install a newer Python (step 1) and rerun `setup.sh` |
-| `Rust not found` | install rustup (step 1), open a new terminal, rerun `setup.sh` |
+| `python >= 3.12 required` | install 3.12+ (step 1) and rerun `setup.sh` — versioned installs (`python3.13` etc.) are found automatically |
+| `Rust not found` | install rustup (step 1), open a new terminal, rerun `setup.sh`; installed but still not found: `. "$HOME/.cargo/env"` |
 | `no Metal devices` | Intel Mac or VM — not supported |
 | self-test **FAIL** | do not mine. Rerun once; if it persists, open a GitHub issue with the full output, your chip and macOS version — the failing stage names the exact kernel |
 | `--address: …` rejected at startup | deliberate — the miner refuses to mine to an address the chain cannot pay (typo, wrong coin, wrong type). Re-paste it, or `… wallet show` prints your local one |

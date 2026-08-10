@@ -7,14 +7,25 @@ set -eu
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-PY=python3.12
-command -v "$PY" >/dev/null 2>&1 || PY=python3
-"$PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' || {
-  echo "python >= 3.12 required (py-pearl-mining is abi3-py312)"; exit 1;
+PY=
+for c in python3.12 python3.13 python3.14 python3; do
+  command -v "$c" >/dev/null 2>&1 || continue
+  if "$c" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+    PY="$c"
+    break
+  fi
+done
+[ -n "$PY" ] || {
+  echo "python >= 3.12 required (py-pearl-mining is abi3-py312)."
+  echo "Looked for python3.12, python3.13, python3.14, python3 on PATH;"
+  echo "e.g.  brew install python@3.12  then rerun this script."
+  exit 1
 }
 command -v cargo >/dev/null 2>&1 || {
   echo "Rust not found. Install it first:"
   echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+  echo "Already installed? This shell can't see it — run:"
+  echo '  . "$HOME/.cargo/env"'
   exit 1
 }
 
@@ -29,9 +40,17 @@ if [ -f PINNED_PEARL_COMMIT.txt ]; then
   WANT="$(cat PINNED_PEARL_COMMIT.txt)"
   HAVE="$(git -C pearl rev-parse HEAD)"
   if [ "$WANT" != "$HAVE" ]; then
-    echo "WARNING: pearl checkout is $HAVE, pinned commit is $WANT."
-    echo "The self-test re-verifies against whatever is checked out, but the"
-    echo "documented verification applies to the pinned commit."
+    # A fresh clone is upstream's tip of the day; the verified commit is the
+    # pinned one. Fetch it (shallow — GitHub serves reachable SHAs) and check
+    # it out, warning only if that fails.
+    if git -C pearl fetch --depth 1 origin "$WANT" &&
+       git -C pearl checkout -q "$WANT"; then
+      echo "pearl: checked out pinned commit $WANT"
+    else
+      echo "WARNING: could not check out pinned commit $WANT; building against $HAVE."
+      echo "The self-test re-verifies against whatever is checked out, but the"
+      echo "documented verification applies to the pinned commit."
+    fi
   fi
 else
   git -C pearl rev-parse HEAD > PINNED_PEARL_COMMIT.txt

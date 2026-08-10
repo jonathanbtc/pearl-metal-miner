@@ -33,8 +33,10 @@ Do this, in order, telling me briefly what you did at each step:
 1. Prerequisites. Verify, and install only what's missing:
    - Xcode Command Line Tools (`xcode-select -p`; install with
      `xcode-select --install` — this one needs me to click a dialog).
-   - Python 3.12+ (`python3 --version`; e.g. `brew install python@3.12`).
-   - Rust (`cargo --version`; install via https://rustup.rs).
+   - Python 3.12+ (`python3 --version`; e.g. `brew install python@3.12` —
+     any 3.12+ works, setup.sh also finds `python3.13`/`python3.14` by name).
+   - Rust (`cargo --version`; install via https://rustup.rs. Installed but
+     not visible in your shell? Run `. "$HOME/.cargo/env"` first).
 
 2. Clone the repo if we're not already inside it:
    `git clone https://github.com/jonathanbtc/pearl-metal-miner.git && cd pearl-metal-miner`
