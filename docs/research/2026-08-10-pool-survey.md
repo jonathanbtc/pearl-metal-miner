@@ -36,7 +36,7 @@ source (ADR-0005).
   `height`, `job_id` `"<hex8>_<diff>"`, `target` big-endian hex consistent
   with diff1/diff.
 - Submit: object `{wallet, worker, job_id, plain_proof}` — same family as
-  kryptex/k1pool. Confirmed live by an accepted share (see Plan.md Phase 5).
+  kryptex/k1pool. Confirmed live by an accepted share on 2026-08-10.
 - The undocumented `pearl-cpu-eu1.luckypool.io:3370` **accepts TCP** — the
   endpoint exists; dialect unprobed.
 
