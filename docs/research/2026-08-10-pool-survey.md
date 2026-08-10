@@ -48,19 +48,51 @@ source (ADR-0005).
   `Post "http://127.0.0.1:44111": connection refused` — **their auth backend
   was down** at survey time. Not a dialect failure; retry later. Deprioritized.
 
+## LuckyPool CPU port — `pearl-cpu-eu1.luckypool.io:3370` ✅ 08-10
+
+The undocumented port is real and lower-difficulty. Same object dialect as
+3360. Advertised **diff 26,000** (vs 888,888 on 3360) → bound ≈ 2²²⁸ →
+P(tile) ≈ 2⁻²⁷ ≈ 34× easier. This is the port that makes an M1 Max share
+tractable in minutes rather than an hour, and the one used to prove the
+submit pipeline.
+
+## Submit pipeline, proven end-to-end ✅ 08-10
+
+Three things were confirmed against the live pool, not reasoned about:
+
+- **Submit framing.** Four param shapes tested with a throwaway proof; all
+  four parsed (the error was about proof content, code 20, not framing). We
+  use `{wallet, worker, job_id, plain_proof}`.
+- **Proof encoding.** A *real* mined proof for the pool's own header came back
+  **code 21 "job not found / stale"**, not code 20 "not a valid PlainProof".
+  So `PlainProof.to_base64()` = `base64(bincode(...))` **decodes on the pool**
+  — the format matches (independently, `ascend_prl`'s `proof-ffi` also emits
+  `base64(bincode(PlainProof))`). The pool tries gzip, zstd and plain; we send
+  plain.
+- **Staleness is the real constraint.** Code 21 was pure timing: a 512²
+  diagnostic took 180 s and the job (block target ~120 s) expired. The real
+  8192² miner at ~2.3M tiles/s finds a share in ~60 s, inside the window.
+
+**Operational gotcha — App Nap.** An unattended background miner is suspended
+by macOS App Nap after ~30 s (grids advanced 11→115 in the first 30 s, then
+179→233 over the next 28 min). `caffeinate -disu` does **not** stop it. The
+fix ships in the backend: `pm_create` holds an
+`NSActivityUserInitiated|LatencyCritical` assertion. Without it, no long run
+completes and the idle socket gets closed by the pool.
+
 ## Choices (1b) and the bar (1c)
 
-- **Primary: LuckyPool** (easier varDiff start, largest Pearl pool).
-  **Second: Kryptex** (clean fixed-difficulty dialect, already exercised).
-  Both are live-tested dialects, satisfying ADR-0006. K1Pool is the spare.
-- **The bar:** at Kryptex's fixed target (diff 2,097,152, factor
-  h·w·k = 2¹⁹ with the 2×64 k=4096 shape), P(tile) ≈ 2⁻²⁶ → **~67M tiles per
-  share**. For a share every ≤10 minutes: **≥ 112K tiles/s**. For a share
-  every minute: ≥ 1.1M tiles/s. LuckyPool's varDiff (observed start 888888 ≈
-  2.36× easier) lowers the entry bar to ~28M tiles/share and adapts further.
-  The v1 correctness-first kernel measured **0.12M tiles/s** — above the
-  10-minute bar, an order of magnitude short of comfortable. Optimisation is
-  authorised by ADR-0002 the moment we decide shares should arrive in ~1
-  minute; the target is **≥1M tiles/s**, with the known move being a
-  GEMM-blocked kernel with cross-tile operand reuse (the v1 kernel re-reads
-  Bᵀ per tile with no reuse and is bandwidth-bound at ~35 GB/s effective).
+- **Primary: LuckyPool** (object dialect, varDiff, CPU port for a tractable
+  share). **Second: Kryptex** (clean fixed-difficulty dialect, exercised).
+  Both live-tested, satisfying ADR-0006. K1Pool is the spare.
+- **The bar, corrected.** Bound = target × h·w·(k−k%r), and the digest is a
+  256-bit value, so P(tile) = bound / 2²⁵⁶. Measured live: LuckyPool 3360
+  bound ≈ 2²²³ → **~2³³ ≈ 8.6e9 tiles/share** (~63 min at 2.3M/s); CPU port
+  3370 bound ≈ 2²²⁸ → **~2²⁷ ≈ 1.3e8 tiles/share** (~60 s). (The earlier
+  "~67M tiles/share" figure understated it — a factor slip; the live bound is
+  the authority.) Kernel progress against this: **0.12M (v1) → 2.31M tiles/s
+  (v2, fp32-FMA blocked)**, the ADR-0002 optimisation authorised once shares
+  needed to arrive in ~1 min. The mandated GPU-difficulty (3360/kryptex) case
+  is genuinely ~1 hour/share on this hardware — the honest cost that the
+  economics in ADR-0002 predict, and why the CPU port is the demonstration
+  vehicle.

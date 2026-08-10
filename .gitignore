@@ -7,3 +7,4 @@ build/
 *.dylib
 .pytest_cache/
 burner_wallet.json
+csrc/metal/kernels_embedded.h
