@@ -10,11 +10,14 @@ event queue the mining loop drains.
 from __future__ import annotations
 
 import json
+import os
 import queue
 import socket
 import threading
 import time
 from dataclasses import dataclass, field
+
+_RAW = bool(os.environ.get("PRL_RAW"))
 
 
 @dataclass
@@ -78,10 +81,14 @@ class PoolConnection:
 
     def send(self, msg: dict):
         raw = json.dumps(msg, separators=(",", ":")).encode() + b"\n"
+        if _RAW:
+            self.log(f"[raw>] {raw[:300]!r}{' …' if len(raw) > 300 else ''} ({len(raw)} B)")
         with self._lock:
             try:
                 self._sock.sendall(raw)
-            except OSError:
+            except OSError as e:
+                if _RAW:
+                    self.log(f"[raw>] send failed: {e}")
                 self.dead.set()
 
     def submit(self, job_id: str, proof_b64: str) -> int:
@@ -100,6 +107,8 @@ class PoolConnection:
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
+                    if _RAW:
+                        self.log(f"[raw<] {line.decode(errors='replace')[:400]}")
                     try:
                         event = self.dialect.parse(line.decode(errors="replace"))
                     except Exception as e:  # noqa: BLE001 — log, never kill the reader
