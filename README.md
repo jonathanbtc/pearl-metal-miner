@@ -180,7 +180,7 @@ tiles searched, average speed, shares accepted/rejected.
   submitting**. If you ever see `LOCAL VERIFY FAILED`, it refused to submit a
   bad share — run `--self-test` and open an issue.
 
-### 7. Keep the Mac usable while it mines
+### 7. Keep the Mac usable — and keep it mining
 
 Mining takes the GPU and, during grid preparation, some CPU. Three controls:
 
@@ -191,11 +191,25 @@ Mining takes the GPU and, during grid preparation, some CPU. Three controls:
 ```
 
 `--intensity 60 --auto-intensity` is the "polite laptop" setting: ~60% GPU
-while you work, full speed when you walk away. The miner also holds a system
-activity token so macOS App Nap doesn't silently suspend it — but it can't
-mine through a closed lid or system sleep: keep the Mac plugged in and awake
-(e.g. Settings → Displays → Advanced, or `caffeinate -s` in another
-terminal).
+while you work, full speed when you walk away.
+
+To keep it mining unattended, add:
+
+```sh
+--keep-awake          # hold off system sleep while the miner runs
+```
+
+This spawns macOS's own `caffeinate` tied to the miner's lifetime: the Mac
+won't idle-sleep while mining, the assertion disappears the moment the miner
+exits (Ctrl-C included — check `pmset -g assertions` if you're curious), and
+the *display* is deliberately still allowed to sleep. A closed laptop lid
+still wins, and App Nap is already handled by an activity token inside the
+Metal context, `--keep-awake` or not.
+
+There is intentionally no start-at-login service: at today's difficulty this
+miner is a hobby, not an income, and auto-starting it would burn your
+electricity without you choosing to. Keeping it running stays a conscious
+act — a terminal window and `--keep-awake` is the whole story.
 
 ### Prefer to have an AI assistant do all this?
 
@@ -221,6 +235,9 @@ self-test as a hard gate — and starts mining politely.
 | `--version` | — | version + third-party notices, then exit |
 | `--max-accepted N` | `0` = never | stop after N accepted shares |
 | `--time-limit S` | `0` = never | stop after S seconds |
+| `--keep-awake` | off | hold off system sleep while mining (released on exit) |
+| `--no-notify` | notify on | silence macOS notifications for accepted shares |
+| `--max-job-age S` | `300` | watchdog: reconnect if the pool sends nothing for S seconds (`0` = off) |
 | `--region-rows N` | `256` | tile rows per GPU dispatch (burst size; affects intensity granularity) |
 | `--m/--n/--k/--rank/--rows/--cols` | 8192/8192/4096/128/`0,32`/`0..63` | the job shape — see below |
 

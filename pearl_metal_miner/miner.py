@@ -17,6 +17,7 @@ import os
 import queue
 import signal
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -62,7 +63,6 @@ def _raise_interrupt(signum, frame):
 def hid_idle_seconds() -> float:
     """System idle time via IOKit (no dependencies). Returns 0 on failure so
     auto-intensity fails toward the polite floor, never toward full burn."""
-    import subprocess  # deferred: only --auto-intensity ever needs it
     try:
         out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"],
                              capture_output=True, text=True, timeout=5).stdout
@@ -228,6 +228,10 @@ def run(argv=None) -> int:
                     help="row-bases per GPU dispatch (burst size)")
     ap.add_argument("--max-accepted", type=int, default=0,
                     help="stop after this many accepted shares (0 = run forever)")
+    ap.add_argument("--keep-awake", action="store_true",
+                    help="hold off system sleep while mining (spawns "
+                         "caffeinate -is, released on exit); the display may "
+                         "still sleep, and a closed lid still wins")
     ap.add_argument("--no-notify", action="store_true",
                     help="disable macOS notifications (on by default: accepted "
                          "shares — the payoff moment usually happens while "
@@ -293,6 +297,7 @@ def run(argv=None) -> int:
     meter = RateMeter()
     notifier = Notifier(enabled=not args.no_notify, log=log)
     conn: PoolConnection | None = None
+    awake: subprocess.Popen | None = None
     stop_note = ""
 
     # Ctrl-C is the README's documented stop; SIGTERM is how process managers
@@ -301,6 +306,19 @@ def run(argv=None) -> int:
     signal.signal(signal.SIGTERM, _raise_interrupt)
 
     try:
+        if args.keep_awake:
+            try:
+                # -w ties the assertion to our pid even if we die ungracefully;
+                # the finally below releases it on every designed exit. App Nap
+                # is handled separately by the NSActivity token inside the
+                # Metal context — this only adds the system-sleep assertion.
+                awake = subprocess.Popen(
+                    ["caffeinate", "-is", "-w", str(os.getpid())],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                log("keep-awake: holding off system sleep while mining "
+                    "(the display may still sleep)")
+            except OSError as e:
+                log(f"keep-awake unavailable ({e}); mining anyway")
         engine = Engine(shape, args.m, args.n)
         conn = PoolConnection(dialect_cls(), host, port, args.address, args.worker,
                               log=log)
@@ -477,6 +495,12 @@ def run(argv=None) -> int:
         # clean stop into a traceback.
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if awake is not None:
+            try:
+                awake.terminate()
+                awake.wait(timeout=5)
+            except Exception:  # noqa: BLE001 — releasing a comfort must not eat the summary
+                pass
         if conn is not None:
             conn.close()
         try:
