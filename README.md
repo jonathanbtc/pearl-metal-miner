@@ -1,5 +1,11 @@
 # pearl-metal-miner
 
+[![ci](https://github.com/jonathanbtc/pearl-metal-miner/actions/workflows/ci.yml/badge.svg)](https://github.com/jonathanbtc/pearl-metal-miner/actions/workflows/ci.yml)
+![CI runs the full bit-exact GPU self-test](https://img.shields.io/badge/CI-full_bit--exact_GPU_self--test-brightgreen)
+![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
+![Platform: macOS on Apple Silicon](https://img.shields.io/badge/platform-macOS_Apple_Silicon-lightgrey)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
+
 Pool mining for Pearl (PRL) on Apple Silicon — any M-series Mac, M1 through
 M5 — with a hand-written Metal compute backend. Apache-2.0, **no developer fee**.
 **Not affiliated with Pearl Research Labs.**
