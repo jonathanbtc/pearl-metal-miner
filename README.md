@@ -173,6 +173,15 @@ tiles searched, average speed, shares accepted/rejected.
 
 ### 6. Read what it prints
 
+Run in a terminal, the miner keeps a **live dashboard** pinned to the bottom
+of the window — device, pool, status (mining / reconnecting), rolling and
+session speed, shares with accept %, time since the last share, and an
+"est." time-to-next-share from the live job's target — while the log lines
+below keep scrolling above it. Redirect or pipe the output (`… | tee
+mining.log`) and the dashboard steps aside automatically: plain logs only,
+no control codes, same as `--no-dashboard`. The logs are the source of
+truth; the panel just watches them.
+
 ```
 [15:39:43] device Apple M1 Max, threadgroup mem 32768, max threads 1024
 [15:39:43] pow kernel: blocked fast path (v2)          ← default job shape = fastest kernel
@@ -251,6 +260,7 @@ self-test as a hard gate — and starts mining politely.
 | `--time-limit S` | `0` = never | stop after S seconds |
 | `--keep-awake` | off | hold off system sleep while mining (released on exit) |
 | `--no-notify` | notify on | silence macOS notifications for accepted shares |
+| `--no-dashboard` | dashboard on | plain scrolling logs even in a terminal (auto-plain when piped) |
 | `--max-job-age S` | `300` | watchdog: reconnect if the pool sends nothing for S seconds (`0` = off) |
 | `--region-rows N` | `256` | tile rows per GPU dispatch (burst size; affects intensity granularity) |
 | `--m/--n/--k/--rank/--rows/--cols` | 8192/8192/4096/128/`0,32`/`0..63` | the job shape — see below |

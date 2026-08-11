@@ -8,6 +8,7 @@ any conversion to a hashrate would be an invented number (house rule).
 
 from __future__ import annotations
 
+import threading
 import time
 from collections import deque
 
@@ -30,11 +31,15 @@ class RateMeter:
         self._t0 = now()
         self._samples: deque[tuple[float, int]] = deque()
         self._win_total = 0
+        # the dashboard's ticker thread reads rolling() (which prunes) while
+        # the mining loop add()s; the window sum must not lose an update
+        self._lock = threading.Lock()
 
     def add(self, n: int):
-        self.total += n
-        self._win_total += n
-        self._samples.append((self._now(), n))
+        with self._lock:
+            self.total += n
+            self._win_total += n
+            self._samples.append((self._now(), n))
 
     def uptime(self) -> float:
         return self._now() - self._t0
@@ -44,11 +49,12 @@ class RateMeter:
         return self.total / up if up > 0 else 0.0
 
     def rolling(self) -> float:
-        t = self._now()
-        cutoff = t - self.window_s
-        # A sample's tiles belong to the burst ENDING at its timestamp, so a
-        # sample at exactly `cutoff` is work done outside (cutoff, t] — drop it.
-        while self._samples and self._samples[0][0] <= cutoff:
-            self._win_total -= self._samples.popleft()[1]
-        span = min(t - self._t0, self.window_s)
-        return self._win_total / span if span > 0 else 0.0
+        with self._lock:
+            t = self._now()
+            cutoff = t - self.window_s
+            # A sample's tiles belong to the burst ENDING at its timestamp, so a
+            # sample at exactly `cutoff` is work done outside (cutoff, t] — drop it.
+            while self._samples and self._samples[0][0] <= cutoff:
+                self._win_total -= self._samples.popleft()[1]
+            span = min(t - self._t0, self.window_s)
+            return self._win_total / span if span > 0 else 0.0

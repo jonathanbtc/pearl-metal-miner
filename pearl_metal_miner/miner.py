@@ -39,6 +39,7 @@ from . import __version__  # noqa: E402
 from . import reference as ref  # noqa: E402
 from . import wallet  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
+from .dashboard import Dashboard  # noqa: E402
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
 from .notify import Notifier  # noqa: E402
 from .stats import RateMeter, fmt_uptime  # noqa: E402
@@ -52,8 +53,20 @@ DIALECTS = {
 }
 
 
+_sink = None  # the dashboard's serialized writer while the panel is up
+
+
 def log(*a):
-    print(f"[{time.strftime('%H:%M:%S')}]", *a, flush=True)
+    line = f"[{time.strftime('%H:%M:%S')}] " + " ".join(str(x) for x in a)
+    if _sink is None:
+        print(line, flush=True)
+    else:
+        _sink(line)
+
+
+def _set_sink(fn):
+    global _sink
+    _sink = fn
 
 
 def _raise_interrupt(signum, frame):
@@ -80,6 +93,7 @@ class Engine:
     def __init__(self, shape: JobShape, m_dim: int, n_dim: int):
         self.metal = Metal()
         info = self.metal.device_info()
+        self.device_name = info["name"]
         log(f"device {info['name']}, threadgroup mem {info['max_threadgroup_memory']}, "
             f"max threads {info['max_threads_per_threadgroup']}")
         self.shape, self.m_dim, self.n_dim = shape, m_dim, n_dim
@@ -294,6 +308,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="disable macOS notifications (on by default: accepted "
                          "shares — the payoff moment usually happens while "
                          "nobody watches the terminal)")
+    ap.add_argument("--no-dashboard", action="store_true",
+                    help="plain scrolling logs even in a terminal; the live "
+                         "dashboard already disables itself when stdout is "
+                         "piped or redirected")
     ap.add_argument("--max-job-age", type=float, default=300,
                     help="watchdog: if the pool sends nothing for this many "
                          "seconds, drop the connection and reconnect — a pool "
@@ -338,6 +356,8 @@ def _apply_config(args, explicit: set[str]):
                 f"{'/'.join(sorted(DIALECTS))}; using {args.pool}")
     if "notifications" in cfg and "no_notify" not in explicit:
         args.no_notify = not cfg["notifications"]
+    if "dashboard" in cfg and "no_dashboard" not in explicit:
+        args.no_dashboard = not cfg["dashboard"]
     args.on_battery = cfg.get("on_battery", "pause")
     for key in ("electricity_usd_per_kwh", "assumed_prl_price_usd",
                 "assumed_network_hashrate"):
@@ -402,11 +422,14 @@ def run(argv=None) -> int:
     row_cursor = 0
     pending: dict[int, str] = {}
     stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0, "disc": 0, "reco": 0,
-             "attempt": 0, "down_since": None, "last_report": time.time()}
+             "attempt": 0, "down_since": None, "last_report": time.time(),
+             "intensity_now": args.intensity, "last_share_t": None,
+             "exp_tiles": None}
     meter = RateMeter()
     notifier = Notifier(enabled=not args.no_notify, log=log)
     conn: PoolConnection | None = None
     awake: subprocess.Popen | None = None
+    dash: Dashboard | None = None
     stop_note = ""
 
     # Ctrl-C is the README's documented stop; SIGTERM is how process managers
@@ -447,6 +470,40 @@ def run(argv=None) -> int:
             return 1
         factory = GridFactory(shape, args.m, args.n)
 
+        def dash_state() -> dict:
+            now = time.monotonic()
+            if conn.dead.is_set():
+                status = "reconnecting"
+                if stats["attempt"]:
+                    status += f" — attempt {stats['attempt']}"
+                if stats["down_since"] is not None:
+                    status += f", down {fmt_uptime(now - stats['down_since'])}"
+            else:
+                status = "mining"
+            rolling = meter.rolling()
+            return {
+                "device": engine.device_name,
+                "pool": f"{args.pool} @ {host}:{port}", "worker": args.worker,
+                "status": status, "uptime": meter.uptime(),
+                "rolling": rolling, "avg": meter.average(),
+                "intensity": (f"{stats['intensity_now']} (auto)"
+                              if args.auto_intensity
+                              else str(stats["intensity_now"])),
+                "acc": stats["acc"], "rej": stats["rej"],
+                "pending": len(pending),
+                "last_share_ago": (now - stats["last_share_t"]
+                                   if stats["last_share_t"] is not None else None),
+                "est_next_s": (stats["exp_tiles"] / rolling
+                               if stats["exp_tiles"] and rolling > 0 else None),
+                "money": None,  # B4's slot
+            }
+
+        dash = Dashboard(dash_state)
+        if not args.no_dashboard:
+            dash.start()
+        if dash.active:
+            _set_sink(dash.log)
+
         def handle_events(block_s: float = 0.0):
             """Drain the pool event queue: record share verdicts, adopt the newest
             job. Returns True if `job` changed (waits up to block_s for the first
@@ -466,6 +523,7 @@ def run(argv=None) -> int:
                             log(f"share {'ACCEPTED' if ev.accepted else 'REJECTED'} "
                                 f"(job {tag}) — {ev.raw[:160]}")
                             if ev.accepted:
+                                stats["last_share_t"] = time.monotonic()
                                 notifier.send("Pearl miner",
                                               f"Share accepted — total {stats['acc']}")
             except queue.Empty:
@@ -537,6 +595,7 @@ def run(argv=None) -> int:
                     job = None
                     continue
                 bound_bytes = bound_int.to_bytes(32, "little")
+                stats["exp_tiles"] = float(1 << 256) / float(bound_int)
                 t0 = time.time()
                 grid = factory.take(job)
                 factory.request(job)  # keep one grid building ahead of the sweep
@@ -584,6 +643,7 @@ def run(argv=None) -> int:
                 stats["idle_full"] = hid_idle_seconds() > 300
             if args.auto_intensity and stats.get("idle_full"):
                 intensity = 100
+            stats["intensity_now"] = intensity
             if intensity < 100:
                 time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
 
@@ -604,6 +664,12 @@ def run(argv=None) -> int:
         # clean stop into a traceback.
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        _set_sink(None)
+        if dash is not None:
+            try:
+                dash.stop()  # scroll region reset, cursor back — before the summary
+            except OSError:
+                pass
         if awake is not None:
             try:
                 awake.terminate()
