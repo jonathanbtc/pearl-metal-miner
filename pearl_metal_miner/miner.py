@@ -239,6 +239,8 @@ getting started (each line is copy-paste):
   python -m pearl_metal_miner.miner         mine with those settings
 
 more examples:
+  --benchmark                               how fast is THIS Mac? offline speed
+                                            test + your economics verdict, ~1 min
   --pool kryptex --worker studio            pick a pool (default: luckypool, the
                                             one with verified accepted shares)
                                             and your dashboard name
@@ -276,6 +278,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="print version and third-party notices")
     ap.add_argument("--self-test", action="store_true",
                     help="run the live differential against the reference and exit")
+    ap.add_argument("--benchmark", action="store_true",
+                    help="offline speed test (~1 min, no pool/wallet/network): "
+                         "measures this Mac's real tiles/s at the default "
+                         "shape, prints your economics verdict if configured, "
+                         "and a paste-ready result block")
+    ap.add_argument("--benchmark-seconds", type=float, default=45,
+                    help="measured duration of --benchmark after warmup "
+                         "(default %(default)s)")
     ap.add_argument("--pool", choices=sorted(DIALECTS), default="luckypool",
                     help="which pool to mine on; picks the wire dialect and "
                          "the default endpoint (default: %(default)s)")
@@ -403,6 +413,9 @@ def run(argv=None) -> int:
         from . import selftest
         return selftest.run()
     _apply_config(args, _explicit_dests(argv))
+    if args.benchmark:
+        from . import benchmark
+        return benchmark.run(args)
 
     # A bad payout address is this domain's silent failure at its worst —
     # value mined to an address nobody can claim — so refuse it before the

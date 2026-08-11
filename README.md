@@ -191,7 +191,10 @@ truth; the panel just watches them.
 
 - **tiles/s** is your search speed — first the last minute's rate (this is the
   number that moves when you change intensity or the machine heats up), then
-  the whole-session average (an M1 Max at full intensity does ~2.3M).
+  the whole-session average. An M1 Max at full intensity does ~2.3M — and you
+  don't have to take that on faith or join a pool to check yours:
+  `--benchmark` measures this Mac offline in about a minute and prints a
+  shareable result.
 - A **share** is a winning tile, verified locally, submitted, and judged by
   the pool. At current pool difficulties expect the **first accepted share to
   take from tens of minutes to hours** — it's a lottery, and long dry spells
@@ -275,6 +278,8 @@ self-test as a hard gate — and starts mining politely.
 | `--auto-intensity` | off | treat `--intensity` as the floor; 100 when idle 5 min |
 | `--cpu-threads N` | `4` | cap on grid-preparation CPU threads |
 | `--self-test` | — | run the differential test suite and exit |
+| `--benchmark` | — | offline speed test (~1 min): your tiles/s + economics verdict + paste-ready block |
+| `--benchmark-seconds S` | `45` | measured duration of the benchmark after warmup |
 | `--version` | — | version + third-party notices, then exit |
 | `--max-accepted N` | `0` = never | stop after N accepted shares |
 | `--time-limit S` | `0` = never | stop after S seconds |
