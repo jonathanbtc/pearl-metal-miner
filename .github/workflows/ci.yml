@@ -1,0 +1,74 @@
+# CI on GitHub's Apple Silicon runners. The point of this workflow is the
+# bit-exact GPU self-test on real Apple hardware; the one honest unknown is
+# whether the runner's virtualized GPU can run Metal compute. The logic
+# below distinguishes three outcomes and never lets the badge overclaim:
+#   - full self-test passes            -> green, "GPU self-test"
+#   - Metal context unavailable (VM)   -> green only if the CPU-only stage 0
+#                                         passes, summary says GPU skipped
+#   - any kernel/check mismatch        -> red, always
+# Only GitHub-owned actions (repo rule 1: everything must be publishable).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rust toolchain
+        run: |
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache upstream build
+        uses: actions/cache@v4
+        with:
+          # the maturin release build of the pinned upstream is the slow step
+          path: |
+            pearl
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: pearl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('PINNED_PEARL_COMMIT.txt') }}-v1
+
+      - name: Setup (venv, deps, pinned upstream, py-pearl-mining)
+        run: ./packaging/setup.sh
+
+      - name: Build libpearlmetal.dylib
+        run: ./packaging/build_macos.sh
+
+      - name: Self-test (GPU if the runner can, honestly reported if not)
+        run: |
+          set +e
+          out=$(.venv/bin/python -m pearl_metal_miner.miner --self-test 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          if [ $rc -eq 0 ]; then
+            echo "### Full bit-exact GPU self-test: PASS on this runner's Metal device" >> "$GITHUB_STEP_SUMMARY"
+            echo "$out" | grep '^device:' >> "$GITHUB_STEP_SUMMARY" || true
+          elif echo "$out" | grep -q '\[FAIL\] Metal context:'; then
+            echo "Metal unavailable on this runner; running the CPU-only stage instead."
+            .venv/bin/python -c "from pearl_metal_miner import selftest; selftest.test_wallet(); assert selftest.CHECKS['fail'] == 0, 'CPU stage failed'; print('CPU-only stage 0 PASS:', selftest.CHECKS['pass'], 'checks')"
+            echo "### GPU unavailable on the hosted runner — build + CPU checks only" >> "$GITHUB_STEP_SUMMARY"
+            echo "The full GPU self-test did not run here. It runs on every real Apple Silicon Mac via \`--self-test\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Self-test reported a real mismatch — failing loudly."
+            exit 1
+          fi
