@@ -390,7 +390,8 @@ ever read (see `docs/adr/0005`).
 
 **Can I add a pool?** Yes — a dialect is one small subclass
 (`pearl_metal_miner/stratum/`, ~50 lines: handshake, notify parsing, submit
-framing). PRs welcome once the repo is public.
+framing). [CONTRIBUTING.md](CONTRIBUTING.md) has the recipe, including the
+one hard sourcing rule (wire logs, never the fee-licensed repos).
 
 **Can the kernel be used elsewhere?** Contributing it upstream or to other
 projects is a welcome conversation now that it works; it is a port to offer,
@@ -411,3 +412,12 @@ not a promise made.
 
 Apache-2.0 (`LICENSE`); third-party notices in `NOTICE`, also printed by
 `--version`. Not affiliated with Pearl Research Labs.
+
+**Patents.** This project's own code is Apache-2.0, which includes a patent
+grant from its contributors. The upstream it builds on is ISC-licensed; ISC
+has no patent language, so no patent promise flows from the original
+authors. No patent search has been performed. This is disclosure, not legal
+advice.
+
+Contributions: see [CONTRIBUTING.md](CONTRIBUTING.md). Security reports:
+[SECURITY.md](SECURITY.md).
