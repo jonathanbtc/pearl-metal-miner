@@ -91,6 +91,7 @@ def start_miner(port: int, *extra: str, env: dict | None = None) -> subprocess.P
            "--address", address, "--worker", "check",
            "--m", "1024", "--n", "1024",
            "--time-limit", "300",  # orphan failsafe; every case stops it sooner
+           "--on-battery", "full",  # checks must mine even on an unplugged laptop
            *extra]  # argparse last-wins, so extras may override the defaults
     return subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, env=env)

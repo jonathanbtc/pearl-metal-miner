@@ -118,7 +118,8 @@ def check_bare_run(cfg: str) -> bool:
         address = json.load(f)["address"]
     with open(cfg, "w") as f:
         f.write(f'pool = "luckypool"\nhost = "127.0.0.1"\nport = {port}\n'
-                f'address = "{address}"\nworker = "cfg"\n')
+                f'address = "{address}"\nworker = "cfg"\n'
+                f'on_battery = "full"\n')  # the check host may be unplugged
     env = dict(os.environ, PRL_CONFIG=cfg)
     proc = subprocess.Popen([sys.executable, "-m", "pearl_metal_miner.miner"],
                             cwd=ROOT, stdout=subprocess.PIPE,

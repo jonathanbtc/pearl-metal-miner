@@ -130,7 +130,7 @@ def _render(values: dict) -> str:
         "# ---- optional toggles (defaults shown; uncomment to change) ----------",
         '# intensity = 100        # GPU duty cycle 1-100',
         '# auto_intensity = false # treat intensity as the floor, 100 when idle',
-        '# on_battery = "pause"   # pause|low|full once the battery guard lands',
+        '# on_battery = "pause"   # pause|low|full when a laptop is unplugged',
         '# notifications = true   # macOS toast on accepted shares',
         '# dashboard = true       # live bottom panel in a terminal; plain logs when piped',
         '# keep_awake = false     # hold off system sleep while mining',

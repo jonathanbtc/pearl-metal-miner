@@ -216,6 +216,14 @@ Mining takes the GPU and, during grid preparation, some CPU. Three controls:
 `--intensity 60 --auto-intensity` is the "polite laptop" setting: ~60% GPU
 while you work, full speed when you walk away.
 
+On battery, the miner **pauses by default** — burning a battery for
+fractions of a cent isn't a default anyone wants — and resumes on AC by
+itself, with a macOS notification both ways. `--on-battery low` mines at
+intensity 25 instead, `--on-battery full` mines on with a single warning
+(config key: `on_battery`). Desktops are unaffected; unplug detection polls
+`pmset` every ~20 s, and any detection failure counts as AC — a desktop can
+never pause by mistake.
+
 To keep it mining unattended, add:
 
 ```sh
@@ -258,6 +266,7 @@ self-test as a hard gate — and starts mining politely.
 | `--version` | — | version + third-party notices, then exit |
 | `--max-accepted N` | `0` = never | stop after N accepted shares |
 | `--time-limit S` | `0` = never | stop after S seconds |
+| `--on-battery {pause,low,full}` | `pause` | unplugged laptop: pause (auto-resume on AC), cap intensity at 25, or mine on |
 | `--keep-awake` | off | hold off system sleep while mining (released on exit) |
 | `--no-notify` | notify on | silence macOS notifications for accepted shares |
 | `--no-dashboard` | dashboard on | plain scrolling logs even in a terminal (auto-plain when piped) |

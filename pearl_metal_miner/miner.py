@@ -73,6 +73,23 @@ def _raise_interrupt(signum, frame):
     raise KeyboardInterrupt
 
 
+_BATTERY_LOW_INTENSITY = 25  # the "low" mode's cap while on battery
+_BATTERY_POLL_S = 20         # unplug → reaction within ~30 s per the map
+
+
+def power_source() -> str:
+    """'battery' or 'ac' via pmset. Fails toward 'ac' — a parse failure must
+    never pause a desktop by mistake."""
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True,
+                             text=True, timeout=5).stdout
+        if "Battery Power" in out:
+            return "battery"
+    except Exception:  # noqa: BLE001
+        pass
+    return "ac"
+
+
 def hid_idle_seconds() -> float:
     """System idle time via IOKit (no dependencies). Returns 0 on failure so
     auto-intensity fails toward the polite floor, never toward full burn."""
@@ -300,6 +317,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="row-bases per GPU dispatch (burst size)")
     ap.add_argument("--max-accepted", type=int, default=0,
                     help="stop after this many accepted shares (0 = run forever)")
+    ap.add_argument("--on-battery", choices=("pause", "low", "full"),
+                    default="pause",
+                    help="when the Mac runs on battery: pause (default — stop "
+                         "sweeping, keep the pool connection, resume on AC by "
+                         "itself), low (cap intensity at "
+                         f"{_BATTERY_LOW_INTENSITY}), or full (mine on, one "
+                         "warning). Desktops are unaffected")
     ap.add_argument("--keep-awake", action="store_true",
                     help="hold off system sleep while mining (spawns "
                          "caffeinate -is, released on exit); the display may "
@@ -346,7 +370,7 @@ def _apply_config(args, explicit: set[str]):
             setattr(args, dest, cfg[key])
 
     for key in ("host", "port", "address", "worker", "intensity",
-                "auto_intensity", "keep_awake", "max_job_age"):
+                "auto_intensity", "keep_awake", "max_job_age", "on_battery"):
         take(key)
     if cfg.get("pool") is not None and "pool" not in explicit:
         if cfg["pool"] in DIALECTS:
@@ -358,7 +382,6 @@ def _apply_config(args, explicit: set[str]):
         args.no_notify = not cfg["notifications"]
     if "dashboard" in cfg and "no_dashboard" not in explicit:
         args.no_dashboard = not cfg["dashboard"]
-    args.on_battery = cfg.get("on_battery", "pause")
     for key in ("electricity_usd_per_kwh", "assumed_prl_price_usd",
                 "assumed_network_hashrate"):
         setattr(args, key, cfg.get(key))
@@ -424,7 +447,8 @@ def run(argv=None) -> int:
     stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0, "disc": 0, "reco": 0,
              "attempt": 0, "down_since": None, "last_report": time.time(),
              "intensity_now": args.intensity, "last_share_t": None,
-             "exp_tiles": None}
+             "exp_tiles": None, "on_batt": False, "batt_poll_t": 0.0,
+             "batt_warned": False}
     meter = RateMeter()
     notifier = Notifier(enabled=not args.no_notify, log=log)
     conn: PoolConnection | None = None
@@ -478,6 +502,8 @@ def run(argv=None) -> int:
                     status += f" — attempt {stats['attempt']}"
                 if stats["down_since"] is not None:
                     status += f", down {fmt_uptime(now - stats['down_since'])}"
+            elif stats["on_batt"] and args.on_battery == "pause":
+                status = "paused — on battery (resumes on AC)"
             else:
                 status = "mining"
             rolling = meter.rolling()
@@ -582,11 +608,44 @@ def run(argv=None) -> int:
                 conn.close()
                 continue
 
+            # Battery awareness (slow poll, like the idle poll below). On a
+            # desktop power_source() is always "ac", so nothing here ever
+            # fires — no logs, no behavior change.
+            if time.monotonic() - stats["batt_poll_t"] > _BATTERY_POLL_S:
+                stats["batt_poll_t"] = time.monotonic()
+                on_batt = power_source() == "battery"
+                if on_batt and not stats["on_batt"]:
+                    if args.on_battery == "pause":
+                        log("on battery — pausing (on_battery = pause); "
+                            "resumes on AC by itself")
+                        notifier.send("Pearl miner", "Paused — on battery")
+                    elif args.on_battery == "low":
+                        log(f"on battery — capping intensity at "
+                            f"{_BATTERY_LOW_INTENSITY} (on_battery = low)")
+                    elif not stats["batt_warned"]:
+                        stats["batt_warned"] = True
+                        log("on battery — mining at full intensity anyway "
+                            "(on_battery = full); this drains a battery fast")
+                elif not on_batt and stats["on_batt"]:
+                    if args.on_battery == "pause":
+                        log("back on AC — resuming")
+                        notifier.send("Pearl miner", "Resuming — on AC power")
+                    elif args.on_battery == "low":
+                        log("back on AC — intensity restored")
+                stats["on_batt"] = on_batt
+
             # A refused job leaves `job` as None; block briefly on the event queue
             # until the pool sends a usable one rather than spinning (or crashing
             # on job.target below).
             new_job = handle_events(block_s=1.0 if job is None else 0.0)
             if job is None:
+                continue
+            if stats["on_batt"] and args.on_battery == "pause":
+                # Sweeping stops; the connection, event drain, and dashboard
+                # stay alive, so resume is instant and the watchdog stays fed.
+                # A job adopted while paused rebuilds its grid on resume.
+                grid = None
+                time.sleep(1)
                 continue
             if new_job or grid is None:
                 bound_int = job.target * factor
@@ -643,6 +702,8 @@ def run(argv=None) -> int:
                 stats["idle_full"] = hid_idle_seconds() > 300
             if args.auto_intensity and stats.get("idle_full"):
                 intensity = 100
+            if stats["on_batt"] and args.on_battery == "low":
+                intensity = min(intensity, _BATTERY_LOW_INTENSITY)
             stats["intensity_now"] = intensity
             if intensity < 100:
                 time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
