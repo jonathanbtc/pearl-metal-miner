@@ -153,8 +153,9 @@ Tested pools (both exercised live; wire evidence in
 `address.worker`. Other endpoints of the same pools can be reached with
 `--host`/`--port`.
 
-Stop with `Ctrl-C`. Nothing needs cleanup — the pool just sees you
-disconnect.
+Stop with `Ctrl-C` (or send SIGTERM). Nothing needs cleanup — the pool just
+sees you disconnect — and the miner prints a session summary on the way out:
+tiles searched, average speed, shares accepted/rejected.
 
 ### 6. Read what it prints
 

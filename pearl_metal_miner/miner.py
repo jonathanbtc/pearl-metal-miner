@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -49,6 +50,10 @@ DIALECTS = {
 
 def log(*a):
     print(f"[{time.strftime('%H:%M:%S')}]", *a, flush=True)
+
+
+def _raise_interrupt(signum, frame):
+    raise KeyboardInterrupt
 
 
 def hid_idle_seconds() -> float:
@@ -264,151 +269,180 @@ def run(argv=None) -> int:
 
     dialect_cls, def_host, def_port = DIALECTS[args.pool]
     host, port = args.host or def_host, args.port or def_port
-    engine = Engine(shape, args.m, args.n)
-    conn = PoolConnection(dialect_cls(), host, port, args.address, args.worker, log=log)
-    log(f"connecting to {args.pool} at {host}:{port} as {args.address}.{args.worker}")
-    conn.connect()
 
     job: Job | None = None
     grid: Grid | None = None
     bound_bytes = b""
     row_cursor = 0
-    factory = GridFactory(shape, args.m, args.n)
     pending: dict[int, str] = {}
     stats = {"tiles": 0, "grids": 0, "sub": 0, "acc": 0, "rej": 0, "t0": time.time(),
              "last_report": time.time()}
-    t_start = time.time()
+    conn: PoolConnection | None = None
+    stop_note = ""
 
-    def handle_events(block_s: float = 0.0):
-        """Drain the pool event queue: record share verdicts, adopt the newest
-        job. Returns True if `job` changed (waits up to block_s for the first
-        event)."""
-        nonlocal job
-        newest: Job | None = None
-        try:
-            while True:
-                ev = conn.events.get(timeout=block_s) if block_s else conn.events.get_nowait()
-                block_s = 0
-                if isinstance(ev, Job):
-                    newest = ev
-                elif isinstance(ev, ShareResult):
-                    tag = pending.pop(ev.msg_id, None)
-                    if tag is not None:
-                        stats["acc" if ev.accepted else "rej"] += 1
-                        log(f"share {'ACCEPTED' if ev.accepted else 'REJECTED'} "
-                            f"(job {tag}) — {ev.raw[:160]}")
-        except queue.Empty:
-            pass
-        if newest is not None and (job is None or newest.job_id != job.job_id):
-            job = newest
-            return True
-        return False
+    # Ctrl-C is the README's documented stop; SIGTERM is how process managers
+    # say the same thing. Both must take the designed exit below — summary
+    # printed, socket closed, exit code 0 — never a traceback.
+    signal.signal(signal.SIGTERM, _raise_interrupt)
 
-    log("waiting for first job…")
-    while job is None:
-        if conn.dead.is_set():
-            log("connection died before first job")
-            return 1
-        handle_events(block_s=1.0)
-    factory.request(job)  # prime the pipeline so the first grid is ready
+    try:
+        engine = Engine(shape, args.m, args.n)
+        conn = PoolConnection(dialect_cls(), host, port, args.address, args.worker,
+                              log=log)
+        log(f"connecting to {args.pool} at {host}:{port} as "
+            f"{args.address}.{args.worker}")
+        conn.connect()
+        factory = GridFactory(shape, args.m, args.n)
 
-    while True:
-        if conn.dead.is_set():
-            log("connection lost; reconnecting in 5s")
-            time.sleep(5)
+        def handle_events(block_s: float = 0.0):
+            """Drain the pool event queue: record share verdicts, adopt the newest
+            job. Returns True if `job` changed (waits up to block_s for the first
+            event)."""
+            nonlocal job
+            newest: Job | None = None
             try:
-                conn.connect()
-                pending.clear()  # old submissions will never be answered
-                job, grid = None, None  # wait for a fresh job on the new session
-                while job is None and not conn.dead.is_set():
-                    handle_events(block_s=1.0)
-                if job is not None:
-                    factory.request(job)
-                    log(f"reconnected; resumed on job {job.job_id}")
-            except OSError as e:
-                log(f"reconnect failed: {e}")
-            continue
-        if args.time_limit and time.time() - t_start > args.time_limit:
-            log("time limit reached")
-            break
-        if args.max_accepted and stats["acc"] >= args.max_accepted:
-            log("accepted-share target reached")
-            break
+                while True:
+                    ev = conn.events.get(timeout=block_s) if block_s else conn.events.get_nowait()
+                    block_s = 0
+                    if isinstance(ev, Job):
+                        newest = ev
+                    elif isinstance(ev, ShareResult):
+                        tag = pending.pop(ev.msg_id, None)
+                        if tag is not None:
+                            stats["acc" if ev.accepted else "rej"] += 1
+                            log(f"share {'ACCEPTED' if ev.accepted else 'REJECTED'} "
+                                f"(job {tag}) — {ev.raw[:160]}")
+            except queue.Empty:
+                pass
+            if newest is not None and (job is None or newest.job_id != job.job_id):
+                job = newest
+                return True
+            return False
 
-        # A refused job leaves `job` as None; block briefly on the event queue
-        # until the pool sends a usable one rather than spinning (or crashing
-        # on job.target below).
-        new_job = handle_events(block_s=1.0 if job is None else 0.0)
-        if job is None:
-            continue
-        if new_job or grid is None:
-            bound_int = job.target * factor
-            if bound_int >= 1 << 256:
-                log("bound overflows 2^256 — refusing job (target unusably easy)")
-                job = None
-                continue
-            bound_bytes = bound_int.to_bytes(32, "little")
-            t0 = time.time()
-            grid = factory.take(job)
-            factory.request(job)  # keep one grid building ahead of the sweep
-            engine.load_grid(grid)
-            stats["grids"] += 1
-            row_cursor = 0
-            n_regions = engine.n_regions(args.region_rows)
-            if stats["grids"] == 1 or new_job:
-                log(f"job {job.job_id} height={job.height}: grid #{stats['grids']} "
-                    f"ready in {time.time() - t0:.2f}s "
-                    f"(~2^{bound_int.bit_length() - 1} bound, "
-                    f"{engine.n_tiles_grid} tiles/grid)")
-
-        t_burst = time.time()
-        hits, n_tiles = engine.sweep_region(row_cursor, args.region_rows,
-                                            grid.a_seed, bound_bytes)
-        stats["tiles"] += n_tiles
-        row_cursor += 1
-        t_burst = time.time() - t_burst
-
-        for base_r, base_c in hits:
+        log("waiting for first job…")
+        while job is None:
             if conn.dead.is_set():
-                log(f"share at tile ({base_r},{base_c}) dropped: connection down "
-                    f"before submit")
-                break
-            proof = grid.craft_proof(base_r, base_c)
-            header = pm.IncompleteBlockHeader.from_bytes(job.header_bytes)
-            ok, msg = verify_share(header, proof, job.target)
-            if not ok:
-                log(f"LOCAL VERIFY FAILED at share difficulty — NOT submitting. "
-                    f"tile ({base_r},{base_c}): {msg}")
+                log("connection died before first job")
+                return 1
+            handle_events(block_s=1.0)
+        factory.request(job)  # prime the pipeline so the first grid is ready
+
+        while True:
+            if conn.dead.is_set():
+                log("connection lost; reconnecting in 5s")
+                time.sleep(5)
+                try:
+                    conn.connect()
+                    pending.clear()  # old submissions will never be answered
+                    job, grid = None, None  # wait for a fresh job on the new session
+                    while job is None and not conn.dead.is_set():
+                        handle_events(block_s=1.0)
+                    if job is not None:
+                        factory.request(job)
+                        log(f"reconnected; resumed on job {job.job_id}")
+                except OSError as e:
+                    log(f"reconnect failed: {e}")
                 continue
-            msg_id = conn.submit(job.job_id, proof.to_base64())
-            pending[msg_id] = job.job_id
-            stats["sub"] += 1
-            log(f"share found at tile ({base_r},{base_c}) → verified locally → "
-                f"submitted (msg {msg_id}) on job {job.job_id}")
+            if args.time_limit and time.time() - stats["t0"] > args.time_limit:
+                log("time limit reached")
+                break
+            if args.max_accepted and stats["acc"] >= args.max_accepted:
+                log("accepted-share target reached")
+                break
 
-        if row_cursor >= n_regions:
-            grid = None  # grid exhausted; next iteration builds a fresh one
+            # A refused job leaves `job` as None; block briefly on the event queue
+            # until the pool sends a usable one rather than spinning (or crashing
+            # on job.target below).
+            new_job = handle_events(block_s=1.0 if job is None else 0.0)
+            if job is None:
+                continue
+            if new_job or grid is None:
+                bound_int = job.target * factor
+                if bound_int >= 1 << 256:
+                    log("bound overflows 2^256 — refusing job (target unusably easy)")
+                    job = None
+                    continue
+                bound_bytes = bound_int.to_bytes(32, "little")
+                t0 = time.time()
+                grid = factory.take(job)
+                factory.request(job)  # keep one grid building ahead of the sweep
+                engine.load_grid(grid)
+                stats["grids"] += 1
+                row_cursor = 0
+                n_regions = engine.n_regions(args.region_rows)
+                if stats["grids"] == 1 or new_job:
+                    log(f"job {job.job_id} height={job.height}: grid #{stats['grids']} "
+                        f"ready in {time.time() - t0:.2f}s "
+                        f"(~2^{bound_int.bit_length() - 1} bound, "
+                        f"{engine.n_tiles_grid} tiles/grid)")
 
-        intensity = args.intensity
-        if args.auto_intensity and time.time() - stats.get("last_idle_poll", 0) > 10:
-            stats["last_idle_poll"] = time.time()
-            stats["idle_full"] = hid_idle_seconds() > 300
-        if args.auto_intensity and stats.get("idle_full"):
-            intensity = 100
-        if intensity < 100:
-            time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
+            t_burst = time.time()
+            hits, n_tiles = engine.sweep_region(row_cursor, args.region_rows,
+                                                grid.a_seed, bound_bytes)
+            stats["tiles"] += n_tiles
+            row_cursor += 1
+            t_burst = time.time() - t_burst
 
-        if time.time() - stats["last_report"] > 30:
-            dt = time.time() - stats["t0"]
-            log(f"{stats['tiles'] / dt / 1e6:.3f}M tiles/s | grids {stats['grids']} | "
-                f"shares {stats['acc']}/{stats['sub']} accepted "
-                f"({stats['rej']} rejected)")
-            stats["last_report"] = time.time()
+            for base_r, base_c in hits:
+                if conn.dead.is_set():
+                    log(f"share at tile ({base_r},{base_c}) dropped: connection down "
+                        f"before submit")
+                    break
+                proof = grid.craft_proof(base_r, base_c)
+                header = pm.IncompleteBlockHeader.from_bytes(job.header_bytes)
+                ok, msg = verify_share(header, proof, job.target)
+                if not ok:
+                    log(f"LOCAL VERIFY FAILED at share difficulty — NOT submitting. "
+                        f"tile ({base_r},{base_c}): {msg}")
+                    continue
+                msg_id = conn.submit(job.job_id, proof.to_base64())
+                pending[msg_id] = job.job_id
+                stats["sub"] += 1
+                log(f"share found at tile ({base_r},{base_c}) → verified locally → "
+                    f"submitted (msg {msg_id}) on job {job.job_id}")
 
-    dt = time.time() - stats["t0"]
-    log(f"done: {stats['tiles']} tiles in {dt:.0f}s "
-        f"({stats['tiles'] / dt / 1e6:.3f}M tiles/s), "
-        f"shares {stats['acc']}/{stats['sub']} accepted, {stats['rej']} rejected")
+            if row_cursor >= n_regions:
+                grid = None  # grid exhausted; next iteration builds a fresh one
+
+            intensity = args.intensity
+            if args.auto_intensity and time.time() - stats.get("last_idle_poll", 0) > 10:
+                stats["last_idle_poll"] = time.time()
+                stats["idle_full"] = hid_idle_seconds() > 300
+            if args.auto_intensity and stats.get("idle_full"):
+                intensity = 100
+            if intensity < 100:
+                time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
+
+            if time.time() - stats["last_report"] > 30:
+                dt = time.time() - stats["t0"]
+                log(f"{stats['tiles'] / dt / 1e6:.3f}M tiles/s | grids {stats['grids']} | "
+                    f"shares {stats['acc']}/{stats['sub']} accepted "
+                    f"({stats['rej']} rejected)")
+                stats["last_report"] = time.time()
+    except KeyboardInterrupt:
+        stop_note = "stopped by user — disconnecting"
+    except BrokenPipeError:
+        pass  # stdout's reader vanished (e.g. `| head`); nothing can be printed
+    finally:
+        # A second Ctrl-C (or a racing TERM) during teardown must not turn a
+        # clean stop into a traceback.
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        if conn is not None:
+            conn.close()
+        try:
+            if stop_note:
+                log(stop_note)
+            dt = max(time.time() - stats["t0"], 1e-9)
+            log(f"session: {stats['tiles']} tiles in {dt:.0f}s "
+                f"({stats['tiles'] / dt / 1e6:.3f}M tiles/s average), "
+                f"{stats['grids']} grids")
+            log(f"session: shares {stats['acc']} accepted, {stats['rej']} rejected, "
+                f"{stats['sub']} submitted"
+                + (f" ({len(pending)} awaiting verdict)" if pending else ""))
+        except BrokenPipeError:
+            # Silence the interpreter's own stdout-flush complaint at exit.
+            os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
     return 0
 
 

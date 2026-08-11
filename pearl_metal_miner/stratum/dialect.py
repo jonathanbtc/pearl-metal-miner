@@ -111,6 +111,19 @@ class PoolConnection:
                                            job_id, proof_b64))
         return self._msg_id
 
+    def close(self):
+        """Deliberate local stop. The protocol has no goodbye — closing the
+        socket IS the disconnect. Detach the socket before closing so the
+        reader it unblocks sees a superseded socket and exits silently,
+        instead of reporting our own shutdown as a lost connection."""
+        self.dead.set()
+        old, self._sock = self._sock, None
+        if old is not None:
+            try:
+                old.close()
+            except OSError:
+                pass
+
     def _reader(self, sock: socket.socket):
         buf = b""
         try:
