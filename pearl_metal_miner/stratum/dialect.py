@@ -107,8 +107,12 @@ class PoolConnection:
         if _RAW:
             self.log(f"[raw>] {raw[:300]!r}{' …' if len(raw) > 300 else ''} ({len(raw)} B)")
         with self._lock:
+            sock = self._sock
+            if sock is None:  # closed under us; nothing to send on
+                self.dead.set()
+                return
             try:
-                self._sock.sendall(raw)
+                sock.sendall(raw)
             except OSError as e:
                 if _RAW:
                     self.log(f"[raw>] send failed: {e}")

@@ -15,7 +15,6 @@ Also greps the new modules' imports: stdlib only (zero new packages).
     .venv/bin/python tools/check_dashboard.py
 """
 
-import json
 import os
 import pty
 import signal
@@ -28,15 +27,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
-from check_shutdown import fake_pool  # noqa: E402
+from check_shutdown import TEST_ADDRESS, fake_pool  # noqa: E402
 
 
 def miner_cmd(port: int) -> list[str]:
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
     return [sys.executable, "-m", "pearl_metal_miner.miner",
             "--pool", "luckypool", "--host", "127.0.0.1", "--port", str(port),
-            "--address", address, "--worker", "dash",
+            "--address", TEST_ADDRESS, "--worker", "dash",
             "--m", "1024", "--n", "1024", "--time-limit", "300",
             "--on-battery", "full"]  # checks must mine on an unplugged laptop
 

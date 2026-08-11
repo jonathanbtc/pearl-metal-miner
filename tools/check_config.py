@@ -11,7 +11,7 @@ against the loopback fake pool purely from config.toml.
     .venv/bin/python tools/check_config.py
 """
 
-import json
+import contextlib
 import os
 import signal
 import subprocess
@@ -24,7 +24,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 
-from check_shutdown import Capture, fake_pool  # noqa: E402
+from check_shutdown import TEST_ADDRESS, Capture, fake_pool  # noqa: E402
 
 
 def run_wizard(cfg: str, answers: list[str], *extra: str):
@@ -114,8 +114,7 @@ def check_precedence(cfg: str) -> bool:
 
 def check_bare_run(cfg: str) -> bool:
     port = fake_pool()
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
+    address = TEST_ADDRESS
     with open(cfg, "w") as f:
         f.write(f'pool = "luckypool"\nhost = "127.0.0.1"\nport = {port}\n'
                 f'address = "{address}"\nworker = "cfg"\n'
@@ -167,9 +166,33 @@ def check_no_config_pointer() -> bool:
     return True
 
 
+@contextlib.contextmanager
+def no_wallet_left_behind():
+    """The wizard offers to create a wallet, and this check accepts that offer
+    (the prefill is "y"), so on a machine with no wallet it mints a REAL
+    private key in the project folder. A test must not leave one lying around:
+    a contributor running the suite on a fresh clone would silently acquire a
+    key file, and the self-test's check count would change underneath them.
+
+    Only ever removes a file this run caused to appear — a wallet that existed
+    before the check started is untouchable, because it may hold real funds.
+    """
+    from pearl_metal_miner import wallet as w
+
+    before = w.find_wallet_file()
+    try:
+        yield
+    finally:
+        after = w.find_wallet_file()
+        if before is None and after is not None:
+            os.remove(after)
+            print(f"  (removed the {os.path.basename(after)} the wizard "
+                  f"created — this check must not mint keys)")
+
+
 def main() -> int:
     signal.alarm(900)
-    with tempfile.TemporaryDirectory() as d:
+    with tempfile.TemporaryDirectory() as d, no_wallet_left_behind():
         cfg = os.path.join(d, "config.toml")
         ok = check_wizard(cfg)
         os.remove(cfg)

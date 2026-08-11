@@ -12,7 +12,6 @@ or privilege-escalation imports anywhere in pearl_metal_miner/.
     .venv/bin/python tools/check_economics.py
 """
 
-import json
 import os
 import re
 import signal
@@ -25,7 +24,7 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 
 from check_dashboard import run_under_pty  # noqa: E402
-from check_shutdown import fake_pool  # noqa: E402
+from check_shutdown import TEST_ADDRESS, fake_pool  # noqa: E402
 from pearl_metal_miner import economics  # noqa: E402
 
 
@@ -67,8 +66,7 @@ def panel_money(out: bytes) -> str:
 
 
 def check_dashboard_verdict(port: int) -> bool:
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
+    address = TEST_ADDRESS
     runs = {}
     for name, extra_cfg in {
         "cheap": "electricity_usd_per_kwh = 0.05\nassumed_prl_price_usd = 0.26\n"
@@ -106,8 +104,7 @@ def check_session_earned() -> bool:
     import subprocess
     from check_notify import accepting_pool, easy_target_hex
     port = accepting_pool(easy_target_hex())
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
+    address = TEST_ADDRESS
     with tempfile.TemporaryDirectory() as d:
         cfg = os.path.join(d, "config.toml")
         with open(cfg, "w") as f:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 # Constants, each carrying its source:
 BLOCK_TIME_S = 120        # block target ~120 s — pool survey 2026-08-10
-BLOCK_REWARD_PRL = 2460   # hashrate.no via Plan.md "Economics", ✅ 2026-08-02
+BLOCK_REWARD_PRL = 2460   # hashrate.no, figure dated 2026-08-02
 DIFF1_TARGET = 0xFFFF << 208  # the diff1 convention observed on the wire
                               # (pool survey 2026-08-10, Kryptex section)
 HASHES_PER_DIFF1 = float(2 ** 256) / float(DIFF1_TARGET)  # ≈ 2^32
