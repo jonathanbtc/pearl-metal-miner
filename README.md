@@ -306,6 +306,18 @@ you). Leave them alone unless you're experimenting — every shape is swept by
 the same bit-exact machinery and locally verified, so experiments are safe,
 just usually slower.
 
+## Measured on real hardware
+
+Rows come **only from linked evidence** — a `--benchmark` block or a live
+measurement someone actually posted. M2–M5 are absent not because they don't
+work (the self-test proves each machine for itself) but because nobody has
+reported one yet. [Post yours](https://github.com/jonathanbtc/pearl-metal-miner/issues/37)
+and get added with credit:
+
+| chip | tiles/s | source |
+| ---- | ------- | ------ |
+| Apple M1 Max | 2.31M (AC) · 1.95M (battery) | [kernel v2 measured live — pool survey, 2026-08-10](docs/research/2026-08-10-pool-survey.md) · [`--benchmark`, 2026-08-11](https://github.com/jonathanbtc/pearl-metal-miner/issues/37#issuecomment-5252918616) |
+
 ## Troubleshooting
 
 | symptom | cause / fix |
@@ -354,12 +366,15 @@ base/Pro/Max/Ultra alike. Nothing in the code is tuned to one chip: device
 limits are queried at runtime, the shaders are compiled on *your* GPU at
 startup, and the single micro-architectural assumption (32-lane simdgroups,
 true of every Apple GPU shipped to date) is checked at startup and refuses
-loudly if a future chip ever differs. Speed scales with GPU size — an M1 Max
-measures ~2.3M tiles/s at the default shape; a bigger or newer GPU is
-proportionally faster (the economics scale the same way, so it loses money
-proportionally faster too). The authors have hardware-verified M1 Max only;
-on any other chip, `--self-test` *is* the verification — run it first, mine
-after it passes. Intel Macs: no.
+loudly if a future chip ever differs. We *expect* speed to scale with GPU
+size — an M1 Max measures ~2.3M tiles/s at the default shape, and a bigger
+GPU should be proportionally faster (the economics would scale the same
+way, so it would lose money proportionally faster too) — but expectation
+is not measurement: the [hardware table](#measured-on-real-hardware) holds
+what's actually been measured, and your `--benchmark` can extend it. The
+authors have hardware-verified M1 Max only; on any other chip,
+`--self-test` *is* the verification — run it first, mine after it passes.
+Intel Macs: no.
 
 **Where did the pool protocols come from?** Kryptex and LuckyPool speak
 different Stratum dialects. Both were reverse-engineered from live wire
