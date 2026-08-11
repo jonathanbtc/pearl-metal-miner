@@ -35,7 +35,7 @@ def check_all_flags_documented() -> bool:
 def check_help_output() -> bool:
     r = subprocess.run([sys.executable, "-m", "pearl_metal_miner.miner",
                         "--help"], capture_output=True, text=True, cwd=ROOT)
-    needles = ["wallet new", "--self-test", "wallet {new,show,verify}",
+    needles = ["miner init", "--self-test", "wallet {new,show,verify}",
                "PRL_RAW=1", "hobby, not an income", "Ctrl-C",
                "python -m pearl_metal_miner.miner"]
     missing = [n for n in needles if n not in r.stdout]

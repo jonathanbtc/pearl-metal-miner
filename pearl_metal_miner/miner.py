@@ -198,12 +198,13 @@ class GridFactory(threading.Thread):
 
 _EPILOG = """\
 getting started (each line is copy-paste):
-  python -m pearl_metal_miner.wallet new    create a local payout wallet once
-                                            (wallet.json IS the money — back it up)
   python -m pearl_metal_miner.miner --self-test
                                             prove the GPU math is bit-exact on this
                                             machine first: 52 exact checks, ~2 s
-  python -m pearl_metal_miner.miner         mine to that wallet
+  python -m pearl_metal_miner.miner init    one-time setup: pool, wallet (created
+                                            here if missing), your cost assumptions
+                                            → config.toml in the project folder
+  python -m pearl_metal_miner.miner         mine with those settings
 
 more examples:
   --pool kryptex --worker studio            pick a pool (default: luckypool, the
@@ -304,7 +305,50 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _explicit_dests(argv) -> set[str]:
+    """Which dests the user actually typed. Same parser, every default
+    suppressed: what remains in the namespace was given on the command
+    line — the fact that decides flag-vs-config precedence."""
+    probe = build_parser()
+    for action in probe._actions:
+        action.default = argparse.SUPPRESS
+    return set(vars(probe.parse_args(argv)).keys())
+
+
+def _apply_config(args, explicit: set[str]):
+    """Overlay config.toml under the CLI: flag > file > built-in default.
+    Also carries the config-only keys (on_battery, economics) onto args for
+    B3/B4/C1 to consume."""
+    from . import config
+    cfg = config.load(log=log)
+
+    def take(key: str, dest: str | None = None):
+        dest = dest or key
+        if key in cfg and dest not in explicit:
+            setattr(args, dest, cfg[key])
+
+    for key in ("host", "port", "address", "worker", "intensity",
+                "auto_intensity", "keep_awake", "max_job_age"):
+        take(key)
+    if cfg.get("pool") is not None and "pool" not in explicit:
+        if cfg["pool"] in DIALECTS:
+            args.pool = cfg["pool"]
+        else:
+            log(f"config.toml: pool = {cfg['pool']!r} is not one of "
+                f"{'/'.join(sorted(DIALECTS))}; using {args.pool}")
+    if "notifications" in cfg and "no_notify" not in explicit:
+        args.no_notify = not cfg["notifications"]
+    args.on_battery = cfg.get("on_battery", "pause")
+    for key in ("electricity_usd_per_kwh", "assumed_prl_price_usd",
+                "assumed_network_hashrate"):
+        setattr(args, key, cfg.get(key))
+
+
 def run(argv=None) -> int:
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv[:1] == ["init"]:
+        from . import config
+        return config.init_wizard(argv[1:])
     ap = build_parser()
     args = ap.parse_args(argv)
 
@@ -314,6 +358,7 @@ def run(argv=None) -> int:
     if args.self_test:
         from . import selftest
         return selftest.run()
+    _apply_config(args, _explicit_dests(argv))
 
     # A bad payout address is this domain's silent failure at its worst —
     # value mined to an address nobody can claim — so refuse it before the
@@ -329,8 +374,10 @@ def run(argv=None) -> int:
         except ValueError as e:
             ap.error(str(e))
         if found is None:
-            ap.error("--address required — or create a local payout wallet once "
-                     "with: python -m pearl_metal_miner.wallet new")
+            ap.error("no payout address: run `python -m pearl_metal_miner.miner "
+                     "init` once (writes config.toml, creates a wallet if you "
+                     "want one) — or pass --address, or run: "
+                     "python -m pearl_metal_miner.wallet new")
         args.address, wallet_path = found
         log(f"no --address given; paying the local wallet {args.address} "
             f"(from {os.path.basename(wallet_path)} — that file is the only "

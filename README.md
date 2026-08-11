@@ -134,12 +134,25 @@ automatically whenever you omit `--address`. Three things to understand:
 `tools/make_burner_wallet.py`. That file keeps working as-is, and the old
 tool now forwards here.)
 
-### 5. Mine
+### 5. Tell it your settings once, then mine
 
 ```sh
-.venv/bin/python -m pearl_metal_miner.miner \
-  --address prl1p...your_address --worker mac1
+.venv/bin/python -m pearl_metal_miner.miner init   # one-time Q&A → config.toml
+.venv/bin/python -m pearl_metal_miner.miner        # mines with those settings
 ```
+
+`init` asks a few questions — pool, payout address (it offers to create the
+step-4 wallet if you skipped it), worker label, and three assumptions: your
+electricity price, an assumed PRL price, an assumed network hashrate, each
+prefilled with a dated figure. It writes a commented `config.toml` next to
+`wallet.json`; uninstalling is still deleting the folder. Everything
+money-related the miner ever shows derives from those three values — your
+assumptions, never a live feed — and the miner contacts nothing but the
+pool.
+
+CLI flags always override the file, so one-off experiments stay one-liners
+(`--intensity 40`, `--worker othermac`, a full `--address … --pool …`
+invocation with no config at all — every pre-config command keeps working).
 
 Both supported pools are exercised live (wire evidence in
 `docs/research/2026-08-10-pool-survey.md`), but they are verified to
