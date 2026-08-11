@@ -143,6 +143,21 @@ int pm_compile(pm_ctx *ctx, const pm_shape *shape, char *err, size_t errlen) {
                                            nserr.localizedDescription]);
         return 1;
       }
+      // The kernels' simd_xor/simd_shuffle_xor folds and per-simdgroup
+      // scratch sizing assume 32-lane simdgroups — true of every Apple GPU
+      // shipped to date (M1…M5). If a future GPU differs, refuse loudly here
+      // rather than fail the self-test mysteriously.
+      NSUInteger width = ctx->pipelines[i].threadExecutionWidth;
+      if (width != 32) {
+        set_err(err, errlen,
+                [NSString stringWithFormat:
+                              @"kernel %s: simdgroup width %lu (expected 32) — "
+                              @"untested GPU generation; refusing to mine. "
+                              @"Please open an issue with your chip and macOS "
+                              @"version.",
+                              kKernelNames[i], (unsigned long)width]);
+        return 1;
+      }
     }
     ctx->shape = *shape;
     ctx->compiled = true;

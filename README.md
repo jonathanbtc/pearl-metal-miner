@@ -1,7 +1,7 @@
 # pearl-metal-miner
 
-Pool mining for Pearl (PRL) on Apple Silicon, with a hand-written Metal
-compute backend. Apache-2.0, **no developer fee**.
+Pool mining for Pearl (PRL) on Apple Silicon — any M-series Mac, M1 through
+M5 — with a hand-written Metal compute backend. Apache-2.0, **no developer fee**.
 **Not affiliated with Pearl Research Labs.**
 
 Built from the ISC-licensed
@@ -42,7 +42,10 @@ It prints `SELF-TEST PASS` and exits 0, or names the exact stage that
 diverged and exits non-zero. **Do not mine on a build that fails it.**
 
 Verified by the authors on: Apple M1 Max, macOS 14.4.1. Every other machine:
-that's what the self-test is for.
+that's what the self-test is for. A complete cold-start run on that machine
+— README commands only, through to a pool-accepted share and the address
+visible on the pool — is recorded in
+[docs/research/2026-08-11-first-user-run-accepted-share.md](docs/research/2026-08-11-first-user-run-accepted-share.md).
 
 ---
 
@@ -52,7 +55,7 @@ that's what the self-test is for.
 
 | requirement | why | check with |
 | ----------- | --- | ---------- |
-| Mac with Apple Silicon (M1 or newer) | the kernels are Metal, unified-memory | `uname -m` → `arm64` |
+| Mac with Apple Silicon — any M-series generation (M1–M5), any variant (base/Pro/Max/Ultra), any model (MacBook Air/Pro, mini, Studio, iMac) | the kernels are Metal, unified-memory | `uname -m` → `arm64` |
 | macOS 14+ (earlier may work, untested) | Metal runtime shader compilation | `sw_vers` |
 | Xcode **Command Line Tools** (not Xcode) | `clang++` for the host library | `xcode-select -p` |
 | Python **3.12 or newer** | the upstream extension targets abi3-py312 | `python3 --version` (a versioned `python3.12`/`3.13`/`3.14` on PATH also counts — `setup.sh` finds them) |
@@ -259,8 +262,18 @@ reference (`--self-test`), and every live share is locally verified by
 upstream's own Rust verifier before submission. A wrong integer anywhere
 produces rejected shares, which is why the self-test exists and ships.
 
-**Which Macs work?** Any Apple Silicon Mac. Speed scales with the GPU: an
-M1 Max measures ~2.3M tiles/s at the default shape. Intel Macs: no.
+**Which Macs work?** Every Apple Silicon Mac: MacBook Air or Pro, mini,
+Studio or iMac, on any M-series generation — M1, M2, M3, M4, M5 —
+base/Pro/Max/Ultra alike. Nothing in the code is tuned to one chip: device
+limits are queried at runtime, the shaders are compiled on *your* GPU at
+startup, and the single micro-architectural assumption (32-lane simdgroups,
+true of every Apple GPU shipped to date) is checked at startup and refuses
+loudly if a future chip ever differs. Speed scales with GPU size — an M1 Max
+measures ~2.3M tiles/s at the default shape; a bigger or newer GPU is
+proportionally faster (the economics scale the same way, so it loses money
+proportionally faster too). The authors have hardware-verified M1 Max only;
+on any other chip, `--self-test` *is* the verification — run it first, mine
+after it passes. Intel Macs: no.
 
 **Where did the pool protocols come from?** Kryptex and LuckyPool speak
 different Stratum dialects. Both were reverse-engineered from live wire

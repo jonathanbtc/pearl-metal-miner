@@ -8,4 +8,5 @@ build/
 .pytest_cache/
 wallet.json
 burner_wallet.json
+mining.log
 csrc/metal/kernels_embedded.h
