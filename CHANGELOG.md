@@ -27,6 +27,13 @@ or the wire protocol; `--self-test` is unchanged and still passes.
   the same semantics, with the old spelling kept for macOS 14.
 - `PoolConnection.send` raised `AttributeError` instead of failing the
   connection if the socket was closed underneath it.
+- The offline check suite could not run on a fresh clone at all: nine of the
+  checks read a payout address out of `burner_wallet.json`, which is
+  gitignored and so exists only on the machine they were written on. They
+  now use one published, burned test address.
+- `tools/check_config.py` created a real `wallet.json` — a real private key —
+  in the project folder as a side effect and left it there. It now removes a
+  wallet it caused to appear, and never one that existed beforehand.
 
 ### Changed
 
