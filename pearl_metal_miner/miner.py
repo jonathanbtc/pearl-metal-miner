@@ -39,6 +39,7 @@ from . import reference as ref  # noqa: E402
 from . import wallet  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
+from .notify import Notifier  # noqa: E402
 from .stats import RateMeter, fmt_uptime  # noqa: E402
 from .stratum.dialect import Job, PoolConnection, ShareResult  # noqa: E402
 from .stratum.kryptex import KryptexDialect  # noqa: E402
@@ -227,6 +228,10 @@ def run(argv=None) -> int:
                     help="row-bases per GPU dispatch (burst size)")
     ap.add_argument("--max-accepted", type=int, default=0,
                     help="stop after this many accepted shares (0 = run forever)")
+    ap.add_argument("--no-notify", action="store_true",
+                    help="disable macOS notifications (on by default: accepted "
+                         "shares — the payoff moment usually happens while "
+                         "nobody watches the terminal)")
     ap.add_argument("--max-job-age", type=float, default=300,
                     help="watchdog: if the pool sends nothing for this many "
                          "seconds, drop the connection and reconnect — a pool "
@@ -286,6 +291,7 @@ def run(argv=None) -> int:
     stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0, "disc": 0, "reco": 0,
              "attempt": 0, "down_since": None, "last_report": time.time()}
     meter = RateMeter()
+    notifier = Notifier(enabled=not args.no_notify, log=log)
     conn: PoolConnection | None = None
     stop_note = ""
 
@@ -332,6 +338,9 @@ def run(argv=None) -> int:
                             stats["acc" if ev.accepted else "rej"] += 1
                             log(f"share {'ACCEPTED' if ev.accepted else 'REJECTED'} "
                                 f"(job {tag}) — {ev.raw[:160]}")
+                            if ev.accepted:
+                                notifier.send("Pearl miner",
+                                              f"Share accepted — total {stats['acc']}")
             except queue.Empty:
                 pass
             if newest is not None and (job is None or newest.job_id != job.job_id):

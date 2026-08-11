@@ -174,6 +174,8 @@ tiles searched, average speed, shares accepted/rejected.
   take from tens of minutes to hours** — it's a lottery, and long dry spells
   are normal, not a bug. Every submission is logged either
   `share ACCEPTED` or `share REJECTED` with the pool's raw reply.
+- An accepted share also pops a **macOS notification**, so the payoff moment
+  reaches you even when the terminal is buried. `--no-notify` turns it off.
 - The miner **verifies every share locally at share difficulty before
   submitting**. If you ever see `LOCAL VERIFY FAILED`, it refused to submit a
   bad share — run `--self-test` and open an issue.

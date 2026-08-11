@@ -83,7 +83,7 @@ def fake_pool() -> int:
     return srv.getsockname()[1]
 
 
-def start_miner(port: int, *extra: str) -> subprocess.Popen:
+def start_miner(port: int, *extra: str, env: dict | None = None) -> subprocess.Popen:
     with open(os.path.join(ROOT, "burner_wallet.json")) as f:
         address = json.load(f)["address"]
     cmd = [sys.executable, "-m", "pearl_metal_miner.miner",
@@ -91,9 +91,9 @@ def start_miner(port: int, *extra: str) -> subprocess.Popen:
            "--address", address, "--worker", "check",
            "--m", "1024", "--n", "1024",
            "--time-limit", "300",  # orphan failsafe; every case stops it sooner
-           *extra]
+           *extra]  # argparse last-wins, so extras may override the defaults
     return subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True)
+                            stderr=subprocess.PIPE, text=True, env=env)
 
 
 class Capture:
