@@ -163,10 +163,12 @@ tiles searched, average speed, shares accepted/rejected.
 [15:39:43] device Apple M1 Max, threadgroup mem 32768, max threads 1024
 [15:39:43] pow kernel: blocked fast path (v2)          ← default job shape = fastest kernel
 [15:39:44] job 973ef27c_888888 height=98020: grid #1 ready in 0.50s (~2^223 bound, 524288 tiles/grid)
-[15:40:13] 1.075M tiles/s | grids 62 | shares 0/0 accepted (0 rejected)
+[15:40:13] 1.075M tiles/s (60s) | 1.032M/s session | shares 0 acc / 0 rej | up 0:00:30
 ```
 
-- **tiles/s** is your search speed (an M1 Max at full intensity does ~2.3M).
+- **tiles/s** is your search speed — first the last minute's rate (this is the
+  number that moves when you change intensity or the machine heats up), then
+  the whole-session average (an M1 Max at full intensity does ~2.3M).
 - A **share** is a winning tile, verified locally, submitted, and judged by
   the pool. At current pool difficulties expect the **first accepted share to
   take from tens of minutes to hours** — it's a lottery, and long dry spells

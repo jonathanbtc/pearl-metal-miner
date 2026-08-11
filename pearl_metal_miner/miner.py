@@ -38,6 +38,7 @@ from . import reference as ref  # noqa: E402
 from . import wallet  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
+from .stats import RateMeter, fmt_uptime  # noqa: E402
 from .stratum.dialect import Job, PoolConnection, ShareResult  # noqa: E402
 from .stratum.kryptex import KryptexDialect  # noqa: E402
 from .stratum.luckypool import LuckyPoolDialect  # noqa: E402
@@ -275,8 +276,9 @@ def run(argv=None) -> int:
     bound_bytes = b""
     row_cursor = 0
     pending: dict[int, str] = {}
-    stats = {"tiles": 0, "grids": 0, "sub": 0, "acc": 0, "rej": 0, "t0": time.time(),
+    stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0,
              "last_report": time.time()}
+    meter = RateMeter()
     conn: PoolConnection | None = None
     stop_note = ""
 
@@ -343,7 +345,7 @@ def run(argv=None) -> int:
                 except OSError as e:
                     log(f"reconnect failed: {e}")
                 continue
-            if args.time_limit and time.time() - stats["t0"] > args.time_limit:
+            if args.time_limit and meter.uptime() > args.time_limit:
                 log("time limit reached")
                 break
             if args.max_accepted and stats["acc"] >= args.max_accepted:
@@ -379,7 +381,7 @@ def run(argv=None) -> int:
             t_burst = time.time()
             hits, n_tiles = engine.sweep_region(row_cursor, args.region_rows,
                                                 grid.a_seed, bound_bytes)
-            stats["tiles"] += n_tiles
+            meter.add(n_tiles)
             row_cursor += 1
             t_burst = time.time() - t_burst
 
@@ -414,10 +416,12 @@ def run(argv=None) -> int:
                 time.sleep(t_burst * (100 - intensity) / max(intensity, 1))
 
             if time.time() - stats["last_report"] > 30:
-                dt = time.time() - stats["t0"]
-                log(f"{stats['tiles'] / dt / 1e6:.3f}M tiles/s | grids {stats['grids']} | "
-                    f"shares {stats['acc']}/{stats['sub']} accepted "
-                    f"({stats['rej']} rejected)")
+                judged = stats["acc"] + stats["rej"]
+                pct = f" ({100 * stats['acc'] / judged:.0f}% accept)" if judged else ""
+                log(f"{meter.rolling() / 1e6:.3f}M tiles/s (60s) | "
+                    f"{meter.average() / 1e6:.3f}M/s session | "
+                    f"shares {stats['acc']} acc / {stats['rej']} rej{pct} | "
+                    f"up {fmt_uptime(meter.uptime())}")
                 stats["last_report"] = time.time()
     except KeyboardInterrupt:
         stop_note = "stopped by user — disconnecting"
@@ -433,9 +437,8 @@ def run(argv=None) -> int:
         try:
             if stop_note:
                 log(stop_note)
-            dt = max(time.time() - stats["t0"], 1e-9)
-            log(f"session: {stats['tiles']} tiles in {dt:.0f}s "
-                f"({stats['tiles'] / dt / 1e6:.3f}M tiles/s average), "
+            log(f"session: {meter.total} tiles in {fmt_uptime(meter.uptime())} "
+                f"({meter.average() / 1e6:.3f}M tiles/s average), "
                 f"{stats['grids']} grids")
             log(f"session: shares {stats['acc']} accepted, {stats['rej']} rejected, "
                 f"{stats['sub']} submitted"
