@@ -12,6 +12,13 @@ generation, noise application, and the fused GEMM → transcript → keyed-BLAKE
 proof-of-work sweep — is implemented from scratch in Metal Shading Language
 and compiled at process start (no Xcode required, Command Line Tools only).
 
+![self-test, then mining to a real pool-accepted share](docs/media/demo.gif)
+
+*Real recording, shown at 3× (source: [`docs/media/demo.cast`](docs/media/demo.cast)):
+self-test → live dashboard → a real `share ACCEPTED` reply from LuckyPool.
+Recorded on the pool's low-difficulty CPU port so you don't watch for an
+hour — at normal difficulty a share takes ~1 h on an M1 Max.*
+
 ---
 
 ## Read this first: you will not make money
