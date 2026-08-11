@@ -1,6 +1,6 @@
 """The live terminal dashboard: hand-rolled ANSI, zero new packages (the
 three-package install is a trust property of a tool that generates private
-keys — grill decision, map #19).
+keys).
 
 Model: an ANSI scroll region owns the top of the screen, so ordinary log
 lines keep scrolling there and remain the plain-text source of truth; the
@@ -46,7 +46,7 @@ class Dashboard:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._size = (0, 0)
-        self._panel_h = 7  # incl. the money line, which always renders (B4)
+        self._panel_h = 7  # incl. the money line, which always renders
         color = not os.environ.get("NO_COLOR")
         self._c = (lambda code, s: f"{_ESC}[{code}m{s}{_ESC}[0m") if color \
             else (lambda code, s: s)
@@ -119,7 +119,7 @@ class Dashboard:
             self._write("".join(out))
 
     def _lines(self, st: dict, cols: int) -> list[str]:
-        c, dim, bold = self._c, "2", "1"
+        c, dim = self._c, "2"
         title = " pearl-metal-miner "
         rule = "─" * max(0, (cols - len(title)) // 2)
         status = st.get("status", "mining")

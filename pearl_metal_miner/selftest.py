@@ -22,8 +22,11 @@ Stages, each exact — a single differing integer fails the run:
                 cumulative int32 tile and transcript checked at EVERY
                 R-boundary (the one error class end-to-end testing cannot
                 localise)
-  4. end-to-end a Metal-found win, committed on the host, crafted into a
-                PlainProof, accepted by upstream's Rust consensus verifier
+  4. end-to-end our job-config serialisation against upstream's own (it feeds
+                the job key, so a wrong byte silently invalidates every
+                share), then a Metal-found win, committed on the host,
+                crafted into a PlainProof, accepted by upstream's Rust
+                consensus verifier
 
 Exit code 0 with "SELF-TEST PASS" on success; non-zero otherwise.
 """
@@ -153,7 +156,7 @@ def test_blake3(m: Metal, rng: np.random.Generator, cases: int = 1024):
 
 
 def test_noise(m: Metal, job: JobShape, rows: int, rng: np.random.Generator):
-    seed, key = rng.bytes(32), rng.bytes(32)
+    key = rng.bytes(32)
     k, r = job.k, job.r
 
     ub = m.alloc(rows * r)
@@ -346,9 +349,16 @@ def test_end_to_end(m: Metal, rng: np.random.Generator):
     pm_header = pm.IncompleteBlockHeader(
         header_fields["version"], header_fields["prev_block"],
         header_fields["merkle_root"], header_fields["timestamp"], header_fields["nbits"])
-    pm_config = pm.MiningConfiguration(
-        k, r, pm.MMAType.Int7xInt7ToInt32,
-        pm.PeriodicPattern.from_list(rows), pm.PeriodicPattern.from_list(cols))
+    # The job key is BLAKE3(header ‖ config), so our config serialisation is a
+    # consensus input: a wrong byte here commits the grid to the wrong key and
+    # every share is refused with no diagnostic. Check it against upstream's
+    # own serialiser rather than inferring it from the end-to-end verify.
+    _check("config serialisation == upstream MiningConfiguration.to_bytes()",
+           bytes(pm.MiningConfiguration(
+               k, r, pm.MMAType.Int7xInt7ToInt32,
+               pm.PeriodicPattern.from_list(rows),
+               pm.PeriodicPattern.from_list(cols)).to_bytes())
+           == ref.config_to_bytes(k, r, job.rows_pattern, job.cols_pattern))
 
     A = rng.integers(ref.SIGNAL_MIN, ref.SIGNAL_MAX + 1, size=(m_dim, k),
                      dtype=np.int64).astype(np.int8)

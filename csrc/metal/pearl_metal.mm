@@ -74,14 +74,24 @@ pm_ctx *pm_create(char *err, size_t errlen) {
                                           options:MTLResourceStorageModeShared];
     if (!ctx->queue || !ctx->dummy) {
       set_err(err, errlen, @"failed to create command queue");
-      delete ctx;
+      pm_destroy(ctx);
       return nullptr;
     }
     return ctx;
   }
 }
 
-void pm_destroy(pm_ctx *ctx) { delete ctx; }
+void pm_destroy(pm_ctx *ctx) {
+  if (!ctx) return;
+  // Symmetry with beginActivity above: the token outlives the context
+  // otherwise, and a caller that creates and destroys a context without
+  // exiting would keep App Nap suppressed for the rest of the process.
+  if (ctx->activity) {
+    [[NSProcessInfo processInfo] endActivity:ctx->activity];
+    ctx->activity = nil;
+  }
+  delete ctx;
+}
 
 int pm_device_info(pm_ctx *ctx, char *name, size_t namelen,
                    uint64_t *max_threadgroup_mem, uint64_t *max_threads_per_tg) {
@@ -349,7 +359,7 @@ int pm_pow_sweep(pm_ctx *ctx, void *an, void *bnt, void *row_bases, uint32_t n_r
 }
 
 /* Fast-path blocked sweep. Host must ensure rows_pattern == [0,32] (two-level),
- * cols_pattern == [0..63], r <= 128, m %% 64 == 0, n %% 64 == 0. */
+ * cols_pattern == [0..63], r <= 128, m % 64 == 0, n % 64 == 0. */
 int pm_pow_sweep2(pm_ctx *ctx, void *an, void *bnt, uint32_t band_lo,
                   uint32_t n_bands, uint32_t n_col_bases, const uint8_t *a_seed,
                   const uint8_t *bound, void *hits, uint32_t hits_capacity,

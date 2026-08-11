@@ -1,7 +1,7 @@
 """Host-side grid lifecycle: generate → commit → (on a hit) prove → verify.
 
-Committed matrices are miner-chosen (Phase 0.5, E3): any int8 values in
-[−64, +64] pass the verifier's range check. The commitment and PlainProof come
+Committed matrices are miner-chosen: any int8 values in [−64, +64] pass
+the verifier's range check. The commitment and PlainProof come
 from `py-pearl-mining` (ISC), per ADR-0001 — the host path is upstream's own
 bit-exact machinery, not a reimplementation.
 """

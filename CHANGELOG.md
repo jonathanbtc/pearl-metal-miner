@@ -3,6 +3,45 @@
 Notable changes, per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+A second QA pass over the whole repo, with the v0.2 additions in focus. No
+behaviour change to the kernels or the wire protocol.
+
+### Added
+
+- `--self-test` now checks our job-config serialisation against upstream's
+  own `MiningConfiguration.to_bytes()` (53 checks, was 52). The job key is
+  `BLAKE3(header ‖ config)`, so those 52 bytes are a consensus input: a wrong
+  one commits every grid to the wrong key and the pool refuses every share
+  with no diagnostic. It was previously only implied by the end-to-end
+  verify, which cannot say *which* input was wrong.
+
+### Changed
+
+- `PROMPT_FOR_AI_DEV.md` described the v0.1 flow: it never mentioned `init`
+  and `config.toml`, `--benchmark`, `--keep-awake`, the live dashboard, or
+  that the miner pauses on battery by default. An agent following it
+  produced a working but v0.1-shaped setup.
+- Shipped code comments no longer refer to the internal wave map by its
+  labels (`B4 money line`, `A4`, `C3`, `Phase 0.5, E3`, "grill decision",
+  "house rule"). They said the same things in vocabulary only this project's
+  own planning documents defined, and those documents are not public. The
+  `tools/check_*.py` docstrings keep their labels — each pairs with a public
+  issue number.
+- `--help` said the self-test runs "52 exact checks". It runs 51 on a fresh
+  clone: the wallet-file check only exists once there is a wallet file. Now
+  "~50", which is true before and after.
+
+### Fixed
+
+- `pm_destroy` never ended the `NSProcessInfo` activity token that
+  suppresses App Nap, and the one failure path in `pm_create` leaked it
+  outright. Harmless for the miner (the token dies with the process) but
+  wrong for any caller that creates and destroys a context and keeps going.
+- Dead locals in `dashboard.py`, `selftest.py` and `tools/check_battery.py`,
+  and a stray `%%` in a `pearl_metal.mm` comment.
+
 ## [0.2.1] — 2026-08-11
 
 Post-v0.2.0 QA pass over the whole repo. No behaviour change to the kernels

@@ -75,7 +75,7 @@ def _raise_interrupt(signum, frame):
 
 
 _BATTERY_LOW_INTENSITY = 25  # the "low" mode's cap while on battery
-_BATTERY_POLL_S = 20         # unplug → reaction within ~30 s per the map
+_BATTERY_POLL_S = 20         # unplug → reaction within ~30 s
 
 
 def power_source() -> str:
@@ -232,7 +232,7 @@ _EPILOG = """\
 getting started (each line is copy-paste):
   python -m pearl_metal_miner.miner --self-test
                                             prove the GPU math is bit-exact on this
-                                            machine first: 52 exact checks, ~2 s
+                                            machine first: ~50 exact checks, ~3 s
   python -m pearl_metal_miner.miner init    one-time setup: pool, wallet (created
                                             here if missing), your cost assumptions
                                             → config.toml in the project folder
@@ -371,7 +371,7 @@ def _explicit_dests(argv) -> set[str]:
 def _apply_config(args, explicit: set[str]):
     """Overlay config.toml under the CLI: flag > file > built-in default.
     Also carries the config-only keys (on_battery, economics) onto args for
-    B3/B4/C1 to consume."""
+    the battery, money-line and benchmark paths to consume."""
     from . import config
     cfg = config.load(log=log)
 
