@@ -37,7 +37,8 @@ def miner_cmd(port: int) -> list[str]:
     return [sys.executable, "-m", "pearl_metal_miner.miner",
             "--pool", "luckypool", "--host", "127.0.0.1", "--port", str(port),
             "--address", address, "--worker", "dash",
-            "--m", "1024", "--n", "1024", "--time-limit", "300"]
+            "--m", "1024", "--n", "1024", "--time-limit", "300",
+            "--on-battery", "full"]  # checks must mine on an unplugged laptop
 
 
 def run_under_pty(port: int, *extra: str, env_add: dict | None = None,

@@ -46,7 +46,7 @@ class Dashboard:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._size = (0, 0)
-        self._panel_h = 6
+        self._panel_h = 7  # incl. the money line, which always renders (B4)
         color = not os.environ.get("NO_COLOR")
         self._c = (lambda code, s: f"{_ESC}[{code}m{s}{_ESC}[0m") if color \
             else (lambda code, s: s)

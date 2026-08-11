@@ -39,6 +39,7 @@ from . import __version__  # noqa: E402
 from . import reference as ref  # noqa: E402
 from . import wallet  # noqa: E402
 from .host import Grid, verify_share  # noqa: E402
+from . import economics  # noqa: E402
 from .dashboard import Dashboard  # noqa: E402
 from .metal_capi import HITS_BUF_BYTES, HITS_CAPACITY, JobShape, Metal  # noqa: E402
 from .notify import Notifier  # noqa: E402
@@ -448,7 +449,7 @@ def run(argv=None) -> int:
              "attempt": 0, "down_since": None, "last_report": time.time(),
              "intensity_now": args.intensity, "last_share_t": None,
              "exp_tiles": None, "on_batt": False, "batt_poll_t": 0.0,
-             "batt_warned": False}
+             "batt_warned": False, "acc_diff_sum": 0.0}
     meter = RateMeter()
     notifier = Notifier(enabled=not args.no_notify, log=log)
     conn: PoolConnection | None = None
@@ -521,7 +522,10 @@ def run(argv=None) -> int:
                                    if stats["last_share_t"] is not None else None),
                 "est_next_s": (stats["exp_tiles"] / rolling
                                if stats["exp_tiles"] and rolling > 0 else None),
-                "money": None,  # B4's slot
+                "money": economics.verdict(
+                    rolling, factor, engine.device_name,
+                    stats["intensity_now"], args.electricity_usd_per_kwh,
+                    args.assumed_prl_price_usd, args.assumed_network_hashrate),
             }
 
         dash = Dashboard(dash_state)
@@ -543,13 +547,15 @@ def run(argv=None) -> int:
                     if isinstance(ev, Job):
                         newest = ev
                     elif isinstance(ev, ShareResult):
-                        tag = pending.pop(ev.msg_id, None)
-                        if tag is not None:
+                        entry = pending.pop(ev.msg_id, None)
+                        if entry is not None:
+                            tag, share_diff = entry
                             stats["acc" if ev.accepted else "rej"] += 1
                             log(f"share {'ACCEPTED' if ev.accepted else 'REJECTED'} "
                                 f"(job {tag}) — {ev.raw[:160]}")
                             if ev.accepted:
                                 stats["last_share_t"] = time.monotonic()
+                                stats["acc_diff_sum"] += share_diff
                                 notifier.send("Pearl miner",
                                               f"Share accepted — total {stats['acc']}")
             except queue.Empty:
@@ -688,7 +694,8 @@ def run(argv=None) -> int:
                         f"tile ({base_r},{base_c}): {msg}")
                     continue
                 msg_id = conn.submit(job.job_id, proof.to_base64())
-                pending[msg_id] = job.job_id
+                pending[msg_id] = (job.job_id,
+                                   economics.DIFF1_TARGET / job.target)
                 stats["sub"] += 1
                 log(f"share found at tile ({base_r},{base_c}) → verified locally → "
                     f"submitted (msg {msg_id}) on job {job.job_id}")
@@ -751,6 +758,13 @@ def run(argv=None) -> int:
             if stats["disc"]:
                 log(f"session: connection lost {stats['disc']}×, "
                     f"reconnected {stats['reco']}×")
+            if stats["acc_diff_sum"] and args.assumed_network_hashrate:
+                earned = economics.prl_per_share_est(
+                    stats["acc_diff_sum"], args.assumed_network_hashrate)
+                log(f"session: est. {earned:.8f} PRL earned from accepted "
+                    f"shares — an estimate at your assumed network hashrate "
+                    f"({args.assumed_network_hashrate:g} EH/s), before pool "
+                    f"fees and luck")
         except BrokenPipeError:
             # Silence the interpreter's own stdout-flush complaint at exit.
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())

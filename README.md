@@ -242,6 +242,18 @@ miner is a hobby, not an income, and auto-starting it would burn your
 electricity without you choosing to. Keeping it running stays a conscious
 act — a terminal window and `--keep-awake` is the whole story.
 
+**About the money line.** The dashboard's verdict (`est. −$0.11/day at your
+assumptions`) is computed entirely offline from the three `config.toml`
+assumptions and your measured tiles/s — the derivation is one commented
+function, `pearl_metal_miner/economics.py`. The watts figure is an
+**estimate from a per-chip table**, because measuring real GPU power needs
+root and **the miner never asks for your password**. Want the real number?
+Run Apple's own tool yourself in another terminal while mining:
+
+```sh
+sudo powermetrics --samplers gpu_power -i 1000 -n 5
+```
+
 ### Prefer to have an AI assistant do all this?
 
 [`PROMPT_FOR_AI_DEV.md`](PROMPT_FOR_AI_DEV.md) contains a ready-to-paste
