@@ -196,25 +196,80 @@ class GridFactory(threading.Thread):
             self.ready.put((job.job_id, grid))
 
 
-def run(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="pearl-metal-miner")
+_EPILOG = """\
+getting started (each line is copy-paste):
+  python -m pearl_metal_miner.wallet new    create a local payout wallet once
+                                            (wallet.json IS the money — back it up)
+  python -m pearl_metal_miner.miner --self-test
+                                            prove the GPU math is bit-exact on this
+                                            machine first: 52 exact checks, ~2 s
+  python -m pearl_metal_miner.miner         mine to that wallet
+
+more examples:
+  --pool luckypool --worker studio          pick the pool and your dashboard name
+  --intensity 60 --auto-intensity           polite laptop: ~60% GPU while you work,
+                                            full speed after 5 idle minutes
+  --keep-awake --no-notify                  unattended Mac: no sleep, no toasts
+
+related commands:
+  python -m pearl_metal_miner.wallet {new,show,verify}
+                                            manage the local payout wallet
+
+debugging:
+  PRL_RAW=1 python -m pearl_metal_miner.miner ...
+                                            log every raw stratum line, both
+                                            directions — the starting point for
+                                            adding a new pool dialect
+
+Stopping is Ctrl-C (or SIGTERM): the pool just sees a disconnect; you get a
+session summary and exit code 0. The README tells the full story, including
+the economics of why this is a hobby and not an income.
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="python -m pearl_metal_miner.miner",
+        description="Pool mining for Pearl (PRL) on Apple Silicon. The proof-of-work\n"
+                    "sweep runs on the GPU as a bit-exact Metal port of the reference\n"
+                    "implementation, and --self-test proves that on your machine before\n"
+                    "any money is at stake. Fair warning: at current network difficulty\n"
+                    "a lone Mac is a hobby, not an income.",
+        epilog=_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--version", action="store_true",
                     help="print version and third-party notices")
     ap.add_argument("--self-test", action="store_true",
                     help="run the live differential against the reference and exit")
-    ap.add_argument("--pool", choices=sorted(DIALECTS), default="kryptex")
-    ap.add_argument("--host")
-    ap.add_argument("--port", type=int)
+    ap.add_argument("--pool", choices=sorted(DIALECTS), default="kryptex",
+                    help="which pool to mine on; picks the wire dialect and "
+                         "the default endpoint (default: %(default)s)")
+    ap.add_argument("--host",
+                    help="pool hostname, if not the chosen pool's default")
+    ap.add_argument("--port", type=int,
+                    help="pool port, if not the chosen pool's default")
     ap.add_argument("--address", help="payout address (prl1p…); default: the "
                                       "local wallet.json, if you created one")
-    ap.add_argument("--worker", default="m1")
-    ap.add_argument("--m", type=int, default=8192)
-    ap.add_argument("--n", type=int, default=8192)
-    ap.add_argument("--k", type=int, default=4096)
-    ap.add_argument("--rank", type=int, default=128)
-    ap.add_argument("--rows", default="0,32", help="rows pattern (comma ints)")
+    ap.add_argument("--worker", default="m1",
+                    help="any label for this machine; the pool dashboard "
+                         "shows stats per address.worker (default: %(default)s)")
+    ap.add_argument("--m", type=int, default=8192,
+                    help="job shape: grid rows (default %(default)s — the "
+                         "defaults are the fast-kernel shape; see README)")
+    ap.add_argument("--n", type=int, default=8192,
+                    help="job shape: grid columns (default %(default)s)")
+    ap.add_argument("--k", type=int, default=4096,
+                    help="job shape: inner dimension (default %(default)s)")
+    ap.add_argument("--rank", type=int, default=128,
+                    help="job shape: tile rank; anything but 128 carries a "
+                         "consensus difficulty penalty, and the miner warns "
+                         "(default %(default)s)")
+    ap.add_argument("--rows", default="0,32",
+                    help="hash-tile rows pattern, comma-separated offsets "
+                         "(advanced; default %(default)s)")
     ap.add_argument("--cols", default=",".join(str(i) for i in range(64)),
-                    help="cols pattern (comma ints)")
+                    help="hash-tile cols pattern, comma-separated offsets "
+                         "(advanced; default 0,1,…,63)")
     ap.add_argument("--intensity", type=int, default=100,
                     help="1-100: GPU duty cycle floor; CPU is capped separately "
                          "via --cpu-threads")
@@ -244,6 +299,11 @@ def run(argv=None) -> int:
                          "(0 = off)")
     ap.add_argument("--time-limit", type=float, default=0,
                     help="stop after N seconds (0 = none)")
+    return ap
+
+
+def run(argv=None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     if args.version:

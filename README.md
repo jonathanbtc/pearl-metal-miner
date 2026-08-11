@@ -258,12 +258,19 @@ just usually slower.
 | `no Metal devices` | Intel Mac or VM — not supported |
 | self-test **FAIL** | do not mine. Rerun once; if it persists, open a GitHub issue with the full output, your chip and macOS version — the failing stage names the exact kernel |
 | `--address: …` rejected at startup | deliberate — the miner refuses to mine to an address the chain cannot pay (typo, wrong coin, wrong type). Re-paste it, or `… wallet show` prints your local one |
-| `connection died before first job` / connect errors | pool down, or a firewall/VPN blocking the port; try the other pool, or `--host`/`--port` for a different region |
-| `connection lost; reconnecting in 5s` | normal on flaky networks; it reconnects and resumes on a fresh job |
+| `cannot resolve` / `timed out` / `cannot connect` at startup | pool down, or a firewall/VPN blocking the port; try the other pool, or `--host`/`--port` for a different region |
+| `connection lost … reconnect attempt N in Ns` | normal on flaky networks; attempts back off 5→60 s forever and mining resumes on a fresh job |
+| `WATCHDOG: nothing from the pool …` | the pool went quiet past `--max-job-age` (default 300 s); the miner reconnects rather than grind a stale job |
 | shares `0/0` for a long time | normal — see step 6; check the pool dashboard shows your worker as connected |
 | occasional `share REJECTED` | usually a stale share (job changed mid-flight) — harmless. Frequent rejects: run `--self-test`, then open an issue with the reject messages |
 | `bound overflows 2^256 — refusing job` | the pool sent an unusably easy target; the miner waits for a sane job (open an issue if it persists) |
 | Mac hot / fans loud | lower `--intensity`, or use `--auto-intensity` with a low floor |
+
+**Seeing the wire.** `PRL_RAW=1 python -m pearl_metal_miner.miner …` logs
+every raw stratum line in both directions. That's how the LuckyPool dialect
+was reverse-engineered, and it's the starting point if you want to add a
+pool: capture a session, then implement the four framing points of
+`stratum/dialect.py`.
 
 ## FAQ
 
