@@ -16,6 +16,7 @@ import argparse
 import os
 import queue
 import signal
+import socket
 import sys
 import threading
 import time
@@ -226,6 +227,12 @@ def run(argv=None) -> int:
                     help="row-bases per GPU dispatch (burst size)")
     ap.add_argument("--max-accepted", type=int, default=0,
                     help="stop after this many accepted shares (0 = run forever)")
+    ap.add_argument("--max-job-age", type=float, default=300,
+                    help="watchdog: if the pool sends nothing for this many "
+                         "seconds, drop the connection and reconnect — a pool "
+                         "that keeps TCP open but stops sending jobs would "
+                         "otherwise leave you grinding a stale job forever "
+                         "(0 = off)")
     ap.add_argument("--time-limit", type=float, default=0,
                     help="stop after N seconds (0 = none)")
     args = ap.parse_args(argv)
@@ -276,8 +283,8 @@ def run(argv=None) -> int:
     bound_bytes = b""
     row_cursor = 0
     pending: dict[int, str] = {}
-    stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0,
-             "last_report": time.time()}
+    stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0, "disc": 0, "reco": 0,
+             "attempt": 0, "down_since": None, "last_report": time.time()}
     meter = RateMeter()
     conn: PoolConnection | None = None
     stop_note = ""
@@ -293,7 +300,18 @@ def run(argv=None) -> int:
                               log=log)
         log(f"connecting to {args.pool} at {host}:{port} as "
             f"{args.address}.{args.worker}")
-        conn.connect()
+        try:
+            conn.connect()
+        except socket.gaierror as e:
+            log(f"cannot resolve {host}: {e} — check --host and your network")
+            return 1
+        except TimeoutError:
+            log(f"connect to {host}:{port} timed out — pool down, or the port "
+                f"is blocked?")
+            return 1
+        except OSError as e:
+            log(f"cannot connect to {host}:{port}: {e}")
+            return 1
         factory = GridFactory(shape, args.m, args.n)
 
         def handle_events(block_s: float = 0.0):
@@ -322,35 +340,53 @@ def run(argv=None) -> int:
             return False
 
         log("waiting for first job…")
-        while job is None:
-            if conn.dead.is_set():
-                log("connection died before first job")
-                return 1
-            handle_events(block_s=1.0)
-        factory.request(job)  # prime the pipeline so the first grid is ready
-
         while True:
-            if conn.dead.is_set():
-                log("connection lost; reconnecting in 5s")
-                time.sleep(5)
-                try:
-                    conn.connect()
-                    pending.clear()  # old submissions will never be answered
-                    job, grid = None, None  # wait for a fresh job on the new session
-                    while job is None and not conn.dead.is_set():
-                        handle_events(block_s=1.0)
-                    if job is not None:
-                        factory.request(job)
-                        log(f"reconnected; resumed on job {job.job_id}")
-                except OSError as e:
-                    log(f"reconnect failed: {e}")
-                continue
             if args.time_limit and meter.uptime() > args.time_limit:
                 log("time limit reached")
                 break
             if args.max_accepted and stats["acc"] >= args.max_accepted:
                 log("accepted-share target reached")
                 break
+
+            if conn.dead.is_set():
+                if stats["down_since"] is None:
+                    stats["down_since"] = time.monotonic()
+                    stats["disc"] += 1
+                stats["attempt"] += 1
+                delay = min(5 * 2 ** (stats["attempt"] - 1), 60)
+                log(f"connection lost (down "
+                    f"{fmt_uptime(time.monotonic() - stats['down_since'])}); "
+                    f"reconnect attempt {stats['attempt']} in {delay}s")
+                time.sleep(delay)
+                try:
+                    conn.connect()
+                    pending.clear()  # old submissions will never be answered
+                    job, grid = None, None  # wait for a fresh job on the new session
+                    stats["reco"] += 1
+                    log(f"reconnected on attempt {stats['attempt']} (down "
+                        f"{fmt_uptime(time.monotonic() - stats['down_since'])}); "
+                        f"waiting for a job")
+                    stats["attempt"], stats["down_since"] = 0, None
+                except socket.gaierror as e:
+                    log(f"attempt {stats['attempt']}: DNS lookup for {host} "
+                        f"failed: {e}")
+                except TimeoutError:
+                    log(f"attempt {stats['attempt']}: connect timed out")
+                except OSError as e:
+                    log(f"attempt {stats['attempt']}: {e}")
+                continue
+
+            # The stratum protocol has no ping. A pool that keeps TCP open but
+            # goes mute would leave us sweeping a stale job forever — the
+            # silent-failure mode this project treats as the enemy — so any
+            # pool silence beyond the watchdog age forces a fresh session.
+            if args.max_job_age and time.monotonic() - conn.last_rx > args.max_job_age:
+                log(f"WATCHDOG: nothing from the pool for "
+                    f"{fmt_uptime(time.monotonic() - conn.last_rx)} "
+                    f"(--max-job-age {args.max_job_age:g}) — dropping the "
+                    f"connection to force a fresh session")
+                conn.close()
+                continue
 
             # A refused job leaves `job` as None; block briefly on the event queue
             # until the pool sends a usable one rather than spinning (or crashing
@@ -443,6 +479,9 @@ def run(argv=None) -> int:
             log(f"session: shares {stats['acc']} accepted, {stats['rej']} rejected, "
                 f"{stats['sub']} submitted"
                 + (f" ({len(pending)} awaiting verdict)" if pending else ""))
+            if stats["disc"]:
+                log(f"session: connection lost {stats['disc']}×, "
+                    f"reconnected {stats['reco']}×")
         except BrokenPipeError:
             # Silence the interpreter's own stdout-flush complaint at exit.
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())

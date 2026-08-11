@@ -65,6 +65,7 @@ class PoolConnection:
         self.address, self.worker = address, worker
         self.events: queue.Queue = queue.Queue()
         self.dead = threading.Event()
+        self.last_rx = time.monotonic()  # any pool traffic; the watchdog's clock
         self.log = log
         self._msg_id = 10  # submit ids start above any handshake id
         self._sock: socket.socket | None = None
@@ -81,6 +82,13 @@ class PoolConnection:
                 old.close()
             except OSError:
                 pass
+        # Events belong to a session; anything still queued from the old one
+        # (a stale job would be mined and rejected) is garbage on the new one.
+        while True:
+            try:
+                self.events.get_nowait()
+            except queue.Empty:
+                break
         sock = socket.create_connection((self.host, self.port), timeout=20)
         sock.settimeout(None)
         # A miner runs for days; without keepalive a silently dropped route
@@ -88,6 +96,7 @@ class PoolConnection:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         self._sock = sock
         self.dead.clear()
+        self.last_rx = time.monotonic()  # the watchdog clock restarts with the session
         for msg in self.dialect.handshake_lines(self.address, self.worker):
             self.send(msg)
         t = threading.Thread(target=self._reader, args=(sock,), daemon=True)
@@ -131,6 +140,7 @@ class PoolConnection:
                 chunk = sock.recv(65536)
                 if not chunk:
                     break
+                self.last_rx = time.monotonic()
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
