@@ -11,7 +11,6 @@ against the loopback fake pool purely from config.toml.
     .venv/bin/python tools/check_config.py
 """
 
-import json
 import os
 import signal
 import subprocess
@@ -24,7 +23,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 
-from check_shutdown import Capture, fake_pool  # noqa: E402
+from check_shutdown import TEST_ADDRESS, Capture, fake_pool  # noqa: E402
 
 
 def run_wizard(cfg: str, answers: list[str], *extra: str):
@@ -114,8 +113,7 @@ def check_precedence(cfg: str) -> bool:
 
 def check_bare_run(cfg: str) -> bool:
     port = fake_pool()
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
+    address = TEST_ADDRESS
     with open(cfg, "w") as f:
         f.write(f'pool = "luckypool"\nhost = "127.0.0.1"\nport = {port}\n'
                 f'address = "{address}"\nworker = "cfg"\n'

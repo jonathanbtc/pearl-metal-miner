@@ -31,6 +31,15 @@ EXIT_TIMEOUT_S = 20
 
 AUTH_ACK = {"error": None, "id": 2, "result": True, "type": "plain"}
 
+# The payout address every check points the miner at. It is the first
+# published, burned self-test vector (selftest.WALLET_VECTORS[0]) — its
+# private key is in the repo, so it must never be mined to for real; these
+# checks only ever talk to a fake pool on loopback, which never credits
+# anything. A constant rather than the developer's own wallet.json on
+# purpose: that file is gitignored, so reading it made this whole suite
+# crash on a fresh clone and in CI, where CONTRIBUTING sends people to run it.
+TEST_ADDRESS = "prl1pmc2s6zx50hyk2rcjn236jhg84jn9gswexwkwjpm9n5s3vvphx5mslmmuz3"
+
 
 def notify(n: int) -> dict:
     # target 1 → bound ≈ 2^-256 of tile space: the sweep never finds a hit,
@@ -84,11 +93,9 @@ def fake_pool() -> int:
 
 
 def start_miner(port: int, *extra: str, env: dict | None = None) -> subprocess.Popen:
-    with open(os.path.join(ROOT, "burner_wallet.json")) as f:
-        address = json.load(f)["address"]
     cmd = [sys.executable, "-m", "pearl_metal_miner.miner",
            "--pool", "luckypool", "--host", "127.0.0.1", "--port", str(port),
-           "--address", address, "--worker", "check",
+           "--address", TEST_ADDRESS, "--worker", "check",
            "--m", "1024", "--n", "1024",
            "--time-limit", "300",  # orphan failsafe; every case stops it sooner
            "--on-battery", "full",  # checks must mine even on an unplugged laptop
