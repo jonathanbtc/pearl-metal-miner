@@ -206,7 +206,9 @@ getting started (each line is copy-paste):
   python -m pearl_metal_miner.miner         mine to that wallet
 
 more examples:
-  --pool luckypool --worker studio          pick the pool and your dashboard name
+  --pool kryptex --worker studio            pick a pool (default: luckypool, the
+                                            one with verified accepted shares)
+                                            and your dashboard name
   --intensity 60 --auto-intensity           polite laptop: ~60% GPU while you work,
                                             full speed after 5 idle minutes
   --keep-awake --no-notify                  unattended Mac: no sleep, no toasts
@@ -241,7 +243,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="print version and third-party notices")
     ap.add_argument("--self-test", action="store_true",
                     help="run the live differential against the reference and exit")
-    ap.add_argument("--pool", choices=sorted(DIALECTS), default="kryptex",
+    ap.add_argument("--pool", choices=sorted(DIALECTS), default="luckypool",
                     help="which pool to mine on; picks the wire dialect and "
                          "the default endpoint (default: %(default)s)")
     ap.add_argument("--host",

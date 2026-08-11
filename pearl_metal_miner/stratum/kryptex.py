@@ -14,6 +14,12 @@ consistent with ascend_prl's independent description):
 
 The miner chooses m, n, k, rank and the patterns; they travel inside the
 PlainProof and the pool grades against them.
+
+Verification depth, stated exactly: subscribe/authorize/notify are observed
+live (survey above). The submit framing is the same family as
+luckypool/k1pool but has NOT yet been exercised by an accepted share — at
+this pool's fixed difficulty a share is roughly hourly, so verifying is
+slow. LuckyPool is the default pool until someone closes this gap.
 """
 
 from __future__ import annotations

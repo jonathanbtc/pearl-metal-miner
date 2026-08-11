@@ -138,16 +138,17 @@ tool now forwards here.)
 
 ```sh
 .venv/bin/python -m pearl_metal_miner.miner \
-  --pool luckypool --address prl1p...your_address --worker mac1
+  --address prl1p...your_address --worker mac1
 ```
 
-Tested pools (both exercised live; wire evidence in
-`docs/research/2026-08-10-pool-survey.md`):
+Both supported pools are exercised live (wire evidence in
+`docs/research/2026-08-10-pool-survey.md`), but they are verified to
+different depths — stated exactly:
 
-| `--pool` | endpoint | difficulty |
-| -------- | -------- | ---------- |
-| `luckypool` | `pearl-eu1.luckypool.io:3360` | varDiff (starts ≈888,888) |
-| `kryptex` | `prl-eu.kryptex.network:7048` | fixed 2,097,152 |
+| `--pool` | endpoint | difficulty | verified |
+| -------- | -------- | ---------- | -------- |
+| `luckypool` (default) | `pearl-eu1.luckypool.io:3360` | varDiff (starts ≈888,888) | ✅ pool-accepted shares — three, pool-side confirmed 2026-08-11 ([evidence](docs/research/2026-08-11-first-user-run-accepted-share.md)) |
+| `kryptex` | `prl-eu.kryptex.network:7048` | fixed 2,097,152 | ⚠️ connects, authorizes, streams jobs live; **no accepted share yet** — its fixed difficulty makes shares ~hourly, so verification is slow. If you get one accepted here, please open an issue with the log lines |
 
 `--worker` is any label you like; the pool's dashboard shows your stats under
 `address.worker`. Other endpoints of the same pools can be reached with

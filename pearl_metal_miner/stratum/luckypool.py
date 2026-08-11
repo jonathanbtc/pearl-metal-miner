@@ -10,9 +10,10 @@ Observed:
         diff (pool difficulty, varDiff), header (76-byte hex), height,
         job_id ("<hex8>_<diff>"), target (big-endian hex)
   → mining.submit     params OBJECT {wallet, worker, job_id, plain_proof}
-      (same family as kryptex/k1pool; framing not yet exercised by an
-      accepted share — their starting difficulty 888888 is in diff1 units,
-      ≈6.5e9 tiles/share, hours at current speed)
+      (framing verified end-to-end: three pool-accepted shares on this
+      dialect — two at the 2026-08-10 bring-up, one in the 08-11 user-style
+      run — pool-side confirmed via LuckyPool's stats API; see
+      docs/research/2026-08-11-first-user-run-accepted-share.md)
 """
 
 from __future__ import annotations

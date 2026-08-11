@@ -24,7 +24,11 @@ def check_all_flags_documented() -> bool:
     if bare:
         print(f"FAIL coverage: flags without help text: {bare}")
         return False
-    print("PASS coverage: every flag has help text")
+    default_pool = build_parser().get_default("pool")
+    if default_pool != "luckypool":  # the pool with verified accepted shares
+        print(f"FAIL coverage: default pool is {default_pool!r}, not luckypool")
+        return False
+    print("PASS coverage: every flag has help text; default pool is luckypool")
     return True
 
 
