@@ -398,11 +398,22 @@ def _apply_config(args, explicit: set[str]):
         setattr(args, key, cfg.get(key))
 
 
+def _interrupted(note: str) -> int:
+    """Ctrl-C is a designed exit for every command, not only the mining loop:
+    one line, never a traceback. Always non-zero — an interrupted command
+    produced no result, and a half-run --self-test must never read as a pass."""
+    print(f"\n{note}")
+    return 1
+
+
 def run(argv=None) -> int:
     argv = list(sys.argv[1:]) if argv is None else list(argv)
     if argv[:1] == ["init"]:
         from . import config
-        return config.init_wizard(argv[1:])
+        try:
+            return config.init_wizard(argv[1:])
+        except KeyboardInterrupt:
+            return _interrupted("aborted; nothing written")
     ap = build_parser()
     args = ap.parse_args(argv)
 
@@ -411,11 +422,19 @@ def run(argv=None) -> int:
         return 0
     if args.self_test:
         from . import selftest
-        return selftest.run()
+        try:
+            return selftest.run()
+        except KeyboardInterrupt:
+            return _interrupted("self-test interrupted — it did NOT pass; "
+                                "rerun it before mining")
     _apply_config(args, _explicit_dests(argv))
     if args.benchmark:
         from . import benchmark
-        return benchmark.run(args)
+        try:
+            return benchmark.run(args)
+        except KeyboardInterrupt:
+            return _interrupted("benchmark interrupted — no result "
+                                "(it needs the full run to measure)")
 
     # A bad payout address is this domain's silent failure at its worst —
     # value mined to an address nobody can claim — so refuse it before the
@@ -457,7 +476,7 @@ def run(argv=None) -> int:
     grid: Grid | None = None
     bound_bytes = b""
     row_cursor = 0
-    pending: dict[int, str] = {}
+    pending: dict[int, tuple[str, float]] = {}  # submit id -> (job_id, share difficulty)
     stats = {"grids": 0, "sub": 0, "acc": 0, "rej": 0, "disc": 0, "reco": 0,
              "attempt": 0, "down_since": None, "last_report": time.time(),
              "intensity_now": args.intensity, "last_share_t": None,
@@ -469,6 +488,11 @@ def run(argv=None) -> int:
     awake: subprocess.Popen | None = None
     dash: Dashboard | None = None
     stop_note = ""
+    # A session summary describes a session. Startup failures (DNS, timeout,
+    # refused) already print their own diagnosis; following it with
+    # "0 tiles, 0 shares" reads like a run that finished, not one that never
+    # began, so the summary waits until there is a session to summarise.
+    session_began = False
 
     # Ctrl-C is the README's documented stop; SIGTERM is how process managers
     # say the same thing. Both must take the designed exit below — summary
@@ -506,6 +530,7 @@ def run(argv=None) -> int:
         except OSError as e:
             log(f"cannot connect to {host}:{port}: {e}")
             return 1
+        session_began = True
         factory = GridFactory(shape, args.m, args.n)
 
         def dash_state() -> dict:
@@ -762,13 +787,16 @@ def run(argv=None) -> int:
         try:
             if stop_note:
                 log(stop_note)
-            log(f"session: {meter.total} tiles in {fmt_uptime(meter.uptime())} "
-                f"({meter.average() / 1e6:.3f}M tiles/s average), "
-                f"{stats['grids']} grids")
-            log(f"session: shares {stats['acc']} accepted, {stats['rej']} rejected, "
-                f"{stats['sub']} submitted"
-                + (f" ({len(pending)} awaiting verdict)" if pending else ""))
-            if stats["disc"]:
+            # No `return` in this finally: it would swallow an in-flight
+            # exception (a Metal failure must still reach the user).
+            if session_began:
+                log(f"session: {meter.total} tiles in {fmt_uptime(meter.uptime())} "
+                    f"({meter.average() / 1e6:.3f}M tiles/s average), "
+                    f"{stats['grids']} grids")
+                log(f"session: shares {stats['acc']} accepted, {stats['rej']} rejected, "
+                    f"{stats['sub']} submitted"
+                    + (f" ({len(pending)} awaiting verdict)" if pending else ""))
+            if session_began and stats["disc"]:
                 log(f"session: connection lost {stats['disc']}×, "
                     f"reconnected {stats['reco']}×")
             if stats["acc_diff_sum"] and args.assumed_network_hashrate:

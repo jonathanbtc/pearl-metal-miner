@@ -53,6 +53,22 @@ jobs:
       - name: Build libpearlmetal.dylib
         run: ./packaging/build_macos.sh
 
+      - name: Offline behaviour checks (tools/check_*.py)
+        # The self-test proves the kernels; these prove the runner around them
+        # — shutdown, reconnect, watchdog, dashboard, config, battery,
+        # economics, benchmark. Seconds to run, and CONTRIBUTING points at
+        # them, so CI should be the thing that keeps them honest.
+        run: |
+          fail=0
+          for t in tools/check_*.py; do
+            if .venv/bin/python "$t" >/tmp/out.txt 2>&1; then
+              echo "PASS $t"
+            else
+              echo "FAIL $t"; cat /tmp/out.txt; fail=1
+            fi
+          done
+          exit $fail
+
       - name: Self-test (GPU if the runner can, honestly reported if not)
         run: |
           set +e

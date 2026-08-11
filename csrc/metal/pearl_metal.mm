@@ -105,7 +105,21 @@ int pm_compile(pm_ctx *ctx, const pm_shape *shape, char *err, size_t errlen) {
     // IEEE fp32 semantics are load-bearing: the fast-path GEMM accumulates
     // chunk partials (integers < 2^24) in fp32 FMA, exactly, only because
     // fast-math is off. The self-test enforces the resulting bit-exactness.
+    // macOS 15 renamed this knob; MTLMathModeSafe IS `fastMathEnabled = NO`,
+    // so both spellings ask for exactly the same semantics — the split is
+    // only to keep the build warning-free on both SDKs.
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && __MAC_OS_X_VERSION_MAX_ALLOWED >= 150000
+    if (@available(macOS 15.0, *)) {
+      opts.mathMode = MTLMathModeSafe;
+    } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+      opts.fastMathEnabled = NO;
+#pragma clang diagnostic pop
+    }
+#else
     opts.fastMathEnabled = NO;
+#endif
     NSError *nserr = nil;
     id<MTLLibrary> lib = [ctx->device newLibraryWithSource:src options:opts error:&nserr];
     if (!lib) {

@@ -284,7 +284,7 @@ self-test as a hard gate — and starts mining politely.
 
 | flag | default | meaning |
 | ---- | ------- | ------- |
-| `--pool {kryptex,luckypool}` | `kryptex` | which pool dialect + endpoint |
+| `--pool {kryptex,luckypool}` | `luckypool` | which pool dialect + endpoint |
 | `--address prl1p…` | your `wallet.json` | payout address, validated before connecting |
 | `--worker NAME` | `m1` | worker label shown on the pool dashboard |
 | `--host`, `--port` | per pool | override the pool endpoint |
