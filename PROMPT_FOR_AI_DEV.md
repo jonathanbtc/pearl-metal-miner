@@ -50,29 +50,44 @@ Do this, in order, telling me briefly what you did at each step:
    `.venv/bin/python -m pearl_metal_miner.miner --self-test`
    It must print SELF-TEST PASS (about 50 exact-integer checks of the wallet
    codec and every GPU stage against the reference implementation). If it
-   fails: STOP. Do not
-   mine, do not work around it. Show me the full output and the exact
-   failing stage — a failed self-test means shares would be silently
-   rejected and electricity wasted.
+   fails: STOP. Do not mine, do not work around it. Show me the full output
+   and the exact failing stage — a failed self-test means shares would be
+   silently rejected and electricity wasted.
 
 5. Wallet. If I gave you a real prl1p… address above, use it. Otherwise run
    `.venv/bin/python -m pearl_metal_miner.wallet new` once, and tell me
    clearly that wallet.json now holds the private key — the only claim on
    anything mined — and must be kept secret and backed up.
 
-6. Start mining, politely, so I can keep using the machine:
-   `.venv/bin/python -m pearl_metal_miner.miner --pool luckypool \
-      --address <the address> --worker <this Mac's short name> \
-      --intensity 60 --auto-intensity`
-   Run it in a way that keeps running after you're done (e.g. tell me the
-   command to run in my own terminal, or use a persistent session), and the
-   Mac must stay plugged in and awake for it to mine.
+6. How fast is this Mac? Run `.venv/bin/python -m pearl_metal_miner.miner
+   --benchmark` (about a minute, fully offline) and show me the tiles/s it
+   measures and the paste-ready block it prints.
 
-7. Confirm it's actually working before declaring success:
+7. Configure it once: `.venv/bin/python -m pearl_metal_miner.miner init`.
+   It asks for pool, payout address, worker label, and three assumptions
+   (my electricity price, an assumed PRL price, an assumed network
+   hashrate) and writes config.toml in the project folder. It is
+   interactive — if you cannot answer prompts, tell me the questions and
+   let me run it, or skip it and pass the flags in step 8 instead. Nothing
+   here contacts the network.
+
+8. Start mining, politely, so I can keep using the machine:
+   `.venv/bin/python -m pearl_metal_miner.miner --intensity 60 \
+      --auto-intensity --keep-awake`
+   (After `init` the pool, address and worker come from config.toml; with
+   no config, add `--pool luckypool --address <the address> --worker <this
+   Mac's short name>`.) `--keep-awake` stops the Mac idle-sleeping while it
+   mines. Run it in a way that keeps running after you're done — tell me
+   the command for my own terminal, or use a persistent session.
+
+9. Confirm it's actually working before declaring success:
    - the log shows a job arriving and a tiles/s rate within ~30 s;
-   - explain to me what the log lines mean and that the FIRST accepted
-     share can legitimately take from tens of minutes to hours — a quiet
-     log is not a failure;
+   - explain to me what the live dashboard at the bottom of the terminal
+     shows, and that the FIRST accepted share can legitimately take from
+     tens of minutes to hours — a quiet log is not a failure;
+   - tell me it pauses by default on battery and resumes on AC by itself
+     (so a laptop should stay plugged in), and that an accepted share pops
+     a macOS notification;
    - tell me how to stop it (Ctrl-C) and how to check the pool dashboard
      for my address.
 

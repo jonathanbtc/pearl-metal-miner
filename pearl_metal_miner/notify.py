@@ -19,8 +19,8 @@ import time
 
 
 class Notifier:
-    """One shared gate for every notification the miner sends (A4 accepted
-    shares; B3 battery pause/resume reuses it). `enabled=False` makes every
+    """One shared gate for every notification the miner sends (accepted
+    shares; battery pause/resume reuses it). `enabled=False` makes every
     call a no-op; so does running anywhere but macOS."""
 
     MIN_GAP_S = 3.0  # a burst of toasts coalesces: the body carries the

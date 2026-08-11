@@ -1,9 +1,9 @@
 """Session rate numbers, shared by the heartbeat, the exit summary, and the
-(B2) dashboard — one place, so every surface shows the same figures.
+dashboard — one place, so every surface shows the same figures.
 
 Display math only: nothing here feeds consensus values, so the kernel rule
 of exact-integer comparisons does not bind; the unit stays tiles/s because
-any conversion to a hashrate would be an invented number (house rule).
+any conversion to a hashrate would be an invented number.
 """
 
 from __future__ import annotations

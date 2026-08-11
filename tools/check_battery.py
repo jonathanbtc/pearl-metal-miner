@@ -3,7 +3,7 @@
 
 `pmset` is shimmed via PATH to read a state file, so the "battery" can be
 unplugged and replugged mid-run against the real miner and the loopback
-fake pool; `osascript` is shimmed the A4 way to record the toasts.
+fake pool; `osascript` is shimmed as in check_notify.py to record toasts.
 
   pause-resume  unplug → "pausing" within 30 s, sweeping stops, toast;
                 replug → resumes by itself, sweeping restarts, toast.
@@ -17,7 +17,6 @@ fake pool; `osascript` is shimmed the A4 way to record the toasts.
 import os
 import signal
 import tempfile
-import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -112,7 +111,8 @@ def check_full(port: int) -> bool:
         shims = make_shims(d)
         set_power(shims, BATT)  # on battery from the start
         proc = start_miner(port, "--on-battery", "full", env=shims["env"])
-        out, err = Capture(proc.stdout), Capture(proc.stderr)
+        out = Capture(proc.stdout)
+        Capture(proc.stderr)  # drained: a full stderr pipe would stall the child
         try:
             ok = (out.wait_for("grid #1 ready", 120)
                   and out.wait_for("mining at full intensity anyway", 35))
@@ -139,7 +139,8 @@ def check_desktop(port: int) -> bool:
     with tempfile.TemporaryDirectory() as d:
         shims = make_shims(d)  # stays AC for the whole run
         proc = start_miner(port, "--on-battery", "pause", env=shims["env"])
-        out, err = Capture(proc.stdout), Capture(proc.stderr)
+        out = Capture(proc.stdout)
+        Capture(proc.stderr)  # drained: a full stderr pipe would stall the child
         try:
             out.wait_for("grid #1 ready", 120)
             time.sleep(25)  # cross a poll boundary

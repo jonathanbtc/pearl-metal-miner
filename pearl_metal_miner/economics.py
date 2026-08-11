@@ -85,7 +85,8 @@ def verdict(tiles_per_s: float, factor: int, device_name: str,
             assumed_prl_price_usd: float | None,
             assumed_network_hashrate: float | None) -> str:
     """The dashboard money line. Missing assumptions → a pointer at init,
-    never a guessed number (map Fog house rule)."""
+    never a guessed number: every figure this project shows is measured or
+    labeled an assumption."""
     if None in (electricity_usd_per_kwh, assumed_prl_price_usd,
                 assumed_network_hashrate):
         return "run init to set your assumptions (electricity, PRL price, network)"

@@ -4,7 +4,7 @@ Engine/GridFactory machinery as live mining (grid rebuild stalls included),
 so the number it prints is the number the miner really achieves. This is
 what makes the README's headline speed reproducible by a shipped command,
 and its paste-ready block is the format contract for the community
-hardware table (C3).
+hardware table in the README.
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def run(args) -> int:
                           args.assumed_network_hashrate)
         .replace("run init", "no economics verdict — run init"))
 
-    # The community-hardware-table contract (C3 must match these columns):
+    # The community-hardware-table contract (the README table's columns):
     print(f"""
 paste-ready for the community hardware table
 (https://github.com/jonathanbtc/pearl-metal-miner — benchmark reports issue):

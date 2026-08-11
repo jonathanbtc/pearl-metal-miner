@@ -10,8 +10,8 @@ config file must never stop the miner.
 The three economics keys (electricity, assumed PRL price, assumed network
 hashrate) are the user's OWN assumptions, prefilled with dated figures at
 `init`: the miner contacts nothing but the pool, so every money figure
-downstream (B4 money line, C1 benchmark) derives from these and is labeled
-an estimate, never a measurement.
+downstream (the dashboard money line, --benchmark) derives from these
+and is labeled an estimate, never a measurement.
 """
 
 from __future__ import annotations
