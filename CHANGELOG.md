@@ -3,10 +3,12 @@
 Notable changes, per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.2] — 2026-08-12
 
-Two QA passes over the whole repo, with the v0.2 additions in focus. No
-behaviour change to the kernels or the wire protocol.
+Two QA passes over the whole repo, with the v0.2 additions in focus. Both
+defects fixed here are the same kind: a number shown to the user that no
+longer matched what the machine was doing. No behaviour change to the
+kernels or the wire protocol; `--self-test` is unchanged and still passes.
 
 ### Added
 

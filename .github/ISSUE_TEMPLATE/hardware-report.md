@@ -16,6 +16,6 @@ labels: help wanted
 
 | chip | macOS | tiles/s | intensity | power | version | date |
 | ---- | ----- | ------- | --------- | ----- | ------- | ---- |
-| Apple M1 Max | 14.4.1 | 2.310M | 100 | AC | 0.2.1 | 2026-08-11 |
+| Apple M1 Max | 14.4.1 | 2.310M | 100 | AC | 0.2.2 | 2026-08-11 |
 
 `--self-test`: <!-- PASS / anything else, paste it -->
