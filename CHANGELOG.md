@@ -5,10 +5,12 @@ Notable changes, per release. Format follows
 
 ## [0.2.2] — 2026-08-12
 
-Two QA passes over the whole repo, with the v0.2 additions in focus. Both
-defects fixed here are the same kind: a number shown to the user that no
-longer matched what the machine was doing. No behaviour change to the
-kernels or the wire protocol; `--self-test` is unchanged and still passes.
+Two QA passes over the whole repo, with the v0.2 additions in focus. The two
+user-visible defects are the same kind — a number shown to the user that no
+longer matched what the machine was doing: a paused miner billing itself for
+power, and `--benchmark` publishing a throttled speed unmarked. No behaviour
+change to the kernels or the wire protocol; `--self-test` is unchanged and
+still passes.
 
 ### Added
 
