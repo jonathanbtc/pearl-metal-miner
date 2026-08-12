@@ -10,6 +10,9 @@ fake pool; `osascript` is shimmed as in check_notify.py to record toasts.
   full          unplug under --on-battery full → exactly one warning,
                 mining continues.
   desktop       power stays AC → zero battery-related output.
+  paused-cost   a paused miner dispatches nothing, so the dashboard's money
+                line must charge nothing for power. It used to keep the
+                pre-pause intensity and bill the full chip wattage at it.
 
     .venv/bin/python tools/check_battery.py
 """
@@ -157,12 +160,48 @@ def check_desktop(port: int) -> bool:
     return True
 
 
+def check_paused_costs_nothing(port: int) -> bool:
+    """Pausing exists so an unplugged laptop stops spending. The money line
+    prices power from the live intensity, so a pause that left the pre-pause
+    intensity standing billed the full chip wattage for a GPU doing nothing —
+    a made-up figure in the one place this project promises none."""
+    name = "paused-cost"
+    from check_dashboard import run_under_pty
+    from check_economics import panel_money
+    with tempfile.TemporaryDirectory() as d:
+        shims = make_shims(d)
+        set_power(shims, BATT)  # on battery from the first poll
+        cfg = os.path.join(d, "config.toml")
+        with open(cfg, "w") as f:
+            f.write("electricity_usd_per_kwh = 0.95\n"      # loud if charged
+                    "assumed_prl_price_usd = 0.26\n"
+                    "assumed_network_hashrate = 28.54\n")
+        # COLUMNS so the panel does not truncate the tail of the money line
+        # (a pty reports no size, and the 80-column fallback cuts it).
+        env = dict(shims["env"], PRL_CONFIG=cfg, COLUMNS="200", LINES="40")
+        # run_under_pty's command ends in `--on-battery full`; a later
+        # occurrence wins in argparse, so this run is a real pause.
+        rc, out = run_under_pty(port, "--on-battery", "pause",
+                                env_add=env, seconds=8.0)
+    money = panel_money(out)
+    text = out.decode(errors="replace")
+    if rc != 0 or "pausing" not in text:
+        print(f"FAIL {name}: rc={rc}, never paused\n{text[-2000:]}")
+        return False
+    if "$0.00 power" not in money or "est. 0 W" not in money:
+        print(f"FAIL {name}: paused run still billed for power: {money!r}")
+        return False
+    print(f"PASS {name}: paused run charges nothing ({money!r})")
+    return True
+
+
 def main() -> int:
     signal.alarm(900)
     port = fake_pool()
     ok = check_pause_resume(port)
     ok = check_full(port) and ok
     ok = check_desktop(port) and ok
+    ok = check_paused_costs_nothing(port) and ok
     print("all checks passed" if ok else "CHECKS FAILED")
     return 0 if ok else 1
 

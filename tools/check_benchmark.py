@@ -3,9 +3,11 @@
 
 Asserts: the benchmark completes with no pool contact and prints the
 paste-ready markdown block (the C3 format contract); the number in that
-block is the one the run measured, over the window it was asked for; with
-config assumptions present the economics verdict appears, without them the
-init pointer does.
+block is the one the run measured, over the window it was asked for, and
+carries the power source it was measured on (AC vs battery is worth ~15%,
+so a row without it can be wrong by more than the differences the table
+exists to show); with config assumptions present the economics verdict
+appears, without them the init pointer does.
 
 Deliberately NOT asserted: that two runs agree closely. That is a property
 of the host — thermals, other load, AC vs battery — not of this code, and
@@ -25,10 +27,13 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+sys.path.insert(0, ROOT)
+
+from pearl_metal_miner.miner import power_source  # noqa: E402
 
 ROW = re.compile(r"^\| (?P<chip>[^|]+) \| (?P<macos>[^|]+) \| "
-                 r"(?P<rate>[0-9.]+)M \| 100 \| (?P<ver>[^|]+) \| "
-                 r"(?P<date>\d{4}-\d{2}-\d{2}) \|$", re.M)
+                 r"(?P<rate>[0-9.]+)M \| 100 \| (?P<power>AC|battery) \| "
+                 r"(?P<ver>[^|]+) \| (?P<date>\d{4}-\d{2}-\d{2}) \|$", re.M)
 
 
 def run_bench(seconds: float, cfg: str | None = None) -> tuple[int, str]:
@@ -56,8 +61,14 @@ def check_block_and_offline() -> bool:
     if "run init" not in out:
         print(f"FAIL block: missing init pointer without assumptions\n{out}")
         return False
+    want_power = "AC" if power_source() == "ac" else "battery"
+    if m.group("power") != want_power:
+        print(f"FAIL block: row says power {m.group('power')}, this host is "
+              f"on {want_power}")
+        return False
     print(f"PASS block: offline, parseable row ({m.group('chip').strip()} "
-          f"{m.group('rate')}M tiles/s), init pointer without assumptions")
+          f"{m.group('rate')}M tiles/s on {want_power}), init pointer "
+          f"without assumptions")
     return True
 
 

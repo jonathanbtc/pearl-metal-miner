@@ -617,7 +617,11 @@ def run(argv=None) -> int:
                     stats["down_since"] = time.monotonic()
                     stats["disc"] += 1
                 stats["attempt"] += 1
-                delay = min(5 * 2 ** (stats["attempt"] - 1), 60)
+                # 5, 10, 20, 40, then 60 forever. The exponent is capped too:
+                # attempts run without limit, and 2**(attempt-1) alone would
+                # grow a multi-thousand-bit integer over a long outage to
+                # compute a number that has been 60 since attempt 5.
+                delay = min(5 * 2 ** min(stats["attempt"] - 1, 4), 60)
                 log(f"connection lost (down "
                     f"{fmt_uptime(time.monotonic() - stats['down_since'])}); "
                     f"reconnect attempt {stats['attempt']} in {delay}s")
@@ -688,7 +692,11 @@ def run(argv=None) -> int:
                 # Sweeping stops; the connection, event drain, and dashboard
                 # stay alive, so resume is instant and the watchdog stays fed.
                 # A job adopted while paused rebuilds its grid on resume.
+                # Intensity is 0 while paused, not the pre-pause value: the
+                # dashboard's money line prices power from it, and a pause
+                # that still charged for electricity would be a wrong number.
                 grid = None
+                stats["intensity_now"] = 0
                 time.sleep(1)
                 continue
             if new_job or grid is None:

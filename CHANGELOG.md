@@ -5,11 +5,21 @@ Notable changes, per release. Format follows
 
 ## [Unreleased]
 
-A second QA pass over the whole repo, with the v0.2 additions in focus. No
+Two QA passes over the whole repo, with the v0.2 additions in focus. No
 behaviour change to the kernels or the wire protocol.
 
 ### Added
 
+- `--benchmark` records whether it measured on AC or battery, in its log
+  line and in the paste-ready block, and says so when it is on battery. The
+  benchmark deliberately ignores `--on-battery` and sweeps at full
+  intensity, so an unplugged laptop was publishing its throttled number with
+  nothing to mark it — and the README's own table puts that gap at ~15%
+  (2.31M vs 1.95M on the reference M1 Max), larger than the differences
+  between chips the table exists to show. Not hypothetical: the seed row in
+  the benchmark reports issue is a battery run, and had to carry a
+  hand-written "this run was on battery" note the block could not supply.
+  The issue template's sample row matches the new format.
 - `--self-test` now checks our job-config serialisation against upstream's
   own `MiningConfiguration.to_bytes()` (53 checks, was 52). The job key is
   `BLAKE3(header ‖ config)`, so those 52 bytes are a consensus input: a wrong
@@ -35,6 +45,19 @@ behaviour change to the kernels or the wire protocol.
 
 ### Fixed
 
+- A miner paused on battery still billed itself for electricity. The money
+  line prices power from the live intensity, and the pause path returned to
+  the top of the loop without touching it, so the panel kept the pre-pause
+  value and charged the full chip wattage — `est. −$0.19/day` for a GPU
+  dispatching nothing. Pausing now sets intensity 0, and `gpu_watts_est`
+  treats duty cycle 0 as 0 W rather than clamping up to 1. A pause is the
+  one moment this miner costs nothing, and it was the moment it claimed to
+  cost most. `tools/check_battery.py` gained a case that fails if the paused
+  money line ever charges again.
+- Reconnect backoff computed `2 ** (attempt - 1)` with no cap on the
+  exponent. Attempts are unbounded, so a long outage grew a multi-thousand-
+  bit integer to produce a number that has been 60 s since attempt 5. Same
+  sequence (5, 10, 20, 40, 60…), bounded arithmetic.
 - `pm_destroy` never ended the `NSProcessInfo` activity token that
   suppresses App Nap, and the one failure path in `pm_create` leaked it
   outright. Harmless for the miner (the token dies with the process) but
