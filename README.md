@@ -325,6 +325,11 @@ and get added with credit:
 | ---- | ------- | ------ |
 | Apple M1 Max | 2.31M (AC) · 1.95M (battery) | [kernel v2 measured live — pool survey, 2026-08-10](docs/research/2026-08-10-pool-survey.md) · [`--benchmark`, 2026-08-11](https://github.com/jonathanbtc/pearl-metal-miner/issues/37#issuecomment-5252918616) |
 
+`--benchmark` records whether it ran on AC or battery in its paste-ready
+block, because that is worth about 15% on the one machine measured both ways
+— more than the differences this table exists to show. Plug in before you
+measure.
+
 ## Troubleshooting
 
 | symptom | cause / fix |

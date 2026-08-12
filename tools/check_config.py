@@ -141,7 +141,6 @@ def check_no_config_pointer() -> bool:
     """Nothing configured at all (empty project folder, no config, no wallet,
     no flags): the miner must exit with an `init` pointer, not a traceback.
     The project folder is module-relative, so point the module elsewhere."""
-    import contextlib
     import io
     os.environ.pop("PRL_CONFIG", None)
     import pearl_metal_miner.miner as miner_mod

@@ -24,7 +24,8 @@ class _SyntheticJob:
 
 def run(args) -> int:
     from .metal_capi import JobShape
-    from .miner import Engine, GridFactory, log  # lazy — miner imports us lazily
+    # lazy — miner imports us lazily
+    from .miner import Engine, GridFactory, log, power_source
 
     shape = JobShape(
         k=args.k, r=args.rank,
@@ -36,6 +37,14 @@ def run(args) -> int:
 
     log("benchmark: offline synthetic job — no pool, no wallet, no network")
     engine = Engine(shape, args.m, args.n)
+    # A benchmark run ignores --on-battery and sweeps at full intensity, so an
+    # unplugged laptop reports its throttled speed with nothing to say so. The
+    # gap is ~15% on the one machine measured both ways, which is more than
+    # enough to make a community-table row wrong — record it, and say so.
+    power = "AC" if power_source() == "ac" else "battery"
+    if power == "battery":
+        log("on battery — this measures the throttled speed; plug in and "
+            "rerun for a number worth posting to the hardware table")
     log(f"warmup {warmup:.0f}s, then {seconds:.0f}s measured at intensity 100")
 
     factory = GridFactory(shape, args.m, args.n)
@@ -72,7 +81,7 @@ def run(args) -> int:
     macos = platform.mac_ver()[0] or "unknown"
     today = datetime.date.today().isoformat()
     log(f"measured {rate / 1e6:.3f}M tiles/s over {dt:.0f}s on "
-        f"{engine.device_name}")
+        f"{engine.device_name} ({power})")
     log(economics.verdict(rate, factor, engine.device_name, 100,
                           args.electricity_usd_per_kwh,
                           args.assumed_prl_price_usd,
@@ -84,8 +93,8 @@ def run(args) -> int:
 paste-ready for the community hardware table
 (https://github.com/jonathanbtc/pearl-metal-miner — benchmark reports issue):
 
-| chip | macOS | tiles/s | intensity | version | date |
-| ---- | ----- | ------- | --------- | ------- | ---- |
-| {engine.device_name} | {macos} | {rate / 1e6:.3f}M | 100 | {__version__} | {today} |
+| chip | macOS | tiles/s | intensity | power | version | date |
+| ---- | ----- | ------- | --------- | ----- | ------- | ---- |
+| {engine.device_name} | {macos} | {rate / 1e6:.3f}M | 100 | {power} | {__version__} | {today} |
 """)
     return 0

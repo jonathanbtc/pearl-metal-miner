@@ -31,13 +31,16 @@ FALLBACK_WATTS_EST = 20
 
 
 def gpu_watts_est(device_name: str, intensity: int) -> float:
-    """Estimated GPU watts for this chip at this duty cycle."""
+    """Estimated GPU watts for this chip at this duty cycle. Duty cycle 0 —
+    the paused-on-battery state, where nothing is dispatched — is 0 W, not a
+    floor: a pause that still billed the user for power would be a made-up
+    number, and the point of pausing is that it costs nothing."""
     full = FALLBACK_WATTS_EST
     for chip in sorted(GPU_WATTS_EST, key=len, reverse=True):
         if chip in device_name:
             full = GPU_WATTS_EST[chip]
             break
-    return full * max(1, min(intensity, 100)) / 100
+    return full * max(0, min(intensity, 100)) / 100
 
 
 def prl_per_day(tiles_per_s: float, factor: int,
