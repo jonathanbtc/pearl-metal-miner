@@ -21,7 +21,7 @@ the pool refuses with no diagnostic — so the self-test is differential and
 exact: every check is an integer comparison against upstream's reference,
 and one mismatch fails the run. The offline checks under `tools/check_*.py`
 cover the runner behavior (shutdown, reconnect, dashboard, config, battery,
-economics, benchmark); run the ones your change touches.
+economics, benchmark, job sanity); run the ones your change touches.
 
 ## The star attraction: add a pool dialect (~50 lines)
 

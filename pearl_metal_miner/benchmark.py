@@ -22,15 +22,10 @@ class _SyntheticJob:
     header_bytes = bytes(range(76))  # any fixed 76 bytes; timing is value-blind
 
 
-def run(args) -> int:
-    from .metal_capi import JobShape
+def run(args, shape) -> int:
     # lazy — miner imports us lazily
     from .miner import Engine, GridFactory, log, power_source
 
-    shape = JobShape(
-        k=args.k, r=args.rank,
-        rows_pattern=ref.Pattern.from_list([int(x) for x in args.rows.split(",")]),
-        cols_pattern=ref.Pattern.from_list([int(x) for x in args.cols.split(",")]))
     factor = ref.difficulty_factor(shape.h, shape.w, args.k, args.rank)
     seconds = args.benchmark_seconds
     warmup = min(10.0, max(2.0, seconds / 5))

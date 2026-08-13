@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 _RAW = bool(os.environ.get("PRL_RAW"))
 
 
+HEADER_BYTES = 76  # IncompleteBlockHeader wire form; every dialect sends this
+
+
 @dataclass
 class Job:
     job_id: str
@@ -28,6 +31,20 @@ class Job:
     height: int = 0
     cert_version: int = 2
     received_at: float = field(default_factory=time.time)
+
+    def __post_init__(self):
+        """Reject a malformed job here, where the reader logs it and drops the
+        line, rather than downstream where it is a traceback: a wrong-length
+        header only fails once a tile wins (after mining a doomed job for
+        hours), and target 0 divides by zero the moment the job is adopted.
+        Every dialect gets this by constructing a Job — including future ones."""
+        if len(self.header_bytes) != HEADER_BYTES:
+            raise ValueError(f"job {self.job_id}: header is "
+                             f"{len(self.header_bytes)} bytes, expected "
+                             f"{HEADER_BYTES}")
+        if self.target <= 0:
+            raise ValueError(f"job {self.job_id}: target {self.target} is not "
+                             f"positive — no tile could ever satisfy it")
 
 
 @dataclass

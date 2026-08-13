@@ -5,7 +5,7 @@
 ![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Platform: macOS on Apple Silicon](https://img.shields.io/badge/platform-macOS_Apple_Silicon-lightgrey)
 ![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue)
-[![Release: v0.2.2](https://img.shields.io/badge/release-v0.2.2-informational)](https://github.com/jonathanbtc/pearl-metal-miner/releases/latest)
+[![Release: v0.2.3](https://img.shields.io/badge/release-v0.2.3-informational)](https://github.com/jonathanbtc/pearl-metal-miner/releases/latest)
 
 Pool mining for Pearl (PRL) on Apple Silicon — any M-series Mac, M1 through
 M5 — with a hand-written Metal compute backend. Apache-2.0, **no developer fee**.
@@ -311,7 +311,10 @@ changing them switches to the slower general kernel, and a `--rank` other
 than 128 additionally carries a consensus difficulty penalty (the miner warns
 you). Leave them alone unless you're experimenting — every shape is swept by
 the same bit-exact machinery and locally verified, so experiments are safe,
-just usually slower.
+just usually slower. A shape consensus would never accept (`--rank` not a
+power of two, a `k` outside `16·rank … 4·rank²`, a tile outside 32–256
+elements, an `--m`/`--n` that the pattern doesn't tile) is **refused at
+startup** with the rule named, rather than mined against forever for nothing.
 
 ## Measured on real hardware
 
@@ -345,6 +348,8 @@ measure.
 | shares `0/0` for a long time | normal — see step 6; check the pool dashboard shows your worker as connected |
 | occasional `share REJECTED` | usually a stale share (job changed mid-flight) — harmless. Frequent rejects: run `--self-test`, then open an issue with the reject messages |
 | `bound overflows 2^256 — refusing job` | the pool sent an unusably easy target; the miner waits for a sane job (open an issue if it persists) |
+| `[stratum] parse error: job … header is N bytes` / `target 0 is not positive` | the pool sent a malformed job; it's logged and dropped, and mining continues on the next good one (open an issue if every job does this) |
+| `error: job shape: …` at startup | a `--m/--n/--k/--rank/--rows/--cols` value consensus would never accept — the message names the rule. Omit the flag to get the default shape back |
 | Mac hot / fans loud | lower `--intensity`, or use `--auto-intensity` with a low floor |
 
 **Seeing the wire.** `PRL_RAW=1 python -m pearl_metal_miner.miner …` logs
