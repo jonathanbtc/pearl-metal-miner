@@ -70,9 +70,15 @@ class Buf:
         self.nbytes = nbytes
 
     def array(self, dtype, shape) -> np.ndarray:
-        ptr = self._lib.pm_contents(self._h)
+        # ValueError, not assert: this is the only thing standing between a
+        # miscomputed view and a read straight past the end of a GPU buffer,
+        # and `python -O` strips asserts. The cost is one comparison per view.
+        if self._h is None:
+            raise ValueError("buffer has been released")
         n = int(np.prod(shape)) * np.dtype(dtype).itemsize
-        assert n <= self.nbytes, f"view of {n} B exceeds buffer of {self.nbytes} B"
+        if n > self.nbytes:
+            raise ValueError(f"view of {n} B exceeds buffer of {self.nbytes} B")
+        ptr = self._lib.pm_contents(self._h)
         raw = (C.c_ubyte * n).from_address(ptr)
         return np.frombuffer(raw, dtype=dtype).reshape(shape)
 

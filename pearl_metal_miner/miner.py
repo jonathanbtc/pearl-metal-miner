@@ -264,6 +264,26 @@ the economics of why this is a hobby and not an income.
 """
 
 
+def _bounded(cast, lo, hi, unit=""):
+    """An argparse `type=` that refuses out-of-range numbers by name. Every
+    numeric flag here has a range it means, and several of them misbehave
+    badly outside it — `--region-rows 0` divides by zero on the general
+    kernel, a negative `--max-job-age` makes the watchdog fire every pass and
+    reconnect forever. Cheaper to refuse the number than to explain the
+    symptom."""
+    def parse(raw: str):
+        try:
+            v = cast(raw)
+        except ValueError:
+            want = "a whole number" if cast is int else "a number"
+            raise argparse.ArgumentTypeError(f"must be {want} (got {raw!r})") from None
+        if not lo <= v <= hi:
+            raise argparse.ArgumentTypeError(
+                f"must be between {lo:g} and {hi:g}{unit} (got {v:g})")
+        return v
+    return parse
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="python -m pearl_metal_miner.miner",
@@ -283,7 +303,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "measures this Mac's real tiles/s at the default "
                          "shape, prints your economics verdict if configured, "
                          "and a paste-ready result block")
-    ap.add_argument("--benchmark-seconds", type=float, default=45,
+    ap.add_argument("--benchmark-seconds", type=_bounded(float, 1, 86400, " s"),
+                    default=45,
                     help="measured duration of --benchmark after warmup "
                          "(default %(default)s)")
     ap.add_argument("--pool", choices=sorted(DIALECTS), default="luckypool",
@@ -291,7 +312,7 @@ def build_parser() -> argparse.ArgumentParser:
                          "the default endpoint (default: %(default)s)")
     ap.add_argument("--host",
                     help="pool hostname, if not the chosen pool's default")
-    ap.add_argument("--port", type=int,
+    ap.add_argument("--port", type=_bounded(int, 1, 65535),
                     help="pool port, if not the chosen pool's default")
     ap.add_argument("--address", help="payout address (prl1p…); default: the "
                                       "local wallet.json, if you created one")
@@ -315,18 +336,18 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--cols", default=",".join(str(i) for i in range(64)),
                     help="hash-tile cols pattern, comma-separated offsets "
                          "(advanced; default 0,1,…,63)")
-    ap.add_argument("--intensity", type=int, default=100,
+    ap.add_argument("--intensity", type=_bounded(int, 1, 100), default=100,
                     help="1-100: GPU duty cycle floor; CPU is capped separately "
                          "via --cpu-threads")
     ap.add_argument("--auto-intensity", action="store_true",
                     help="treat --intensity as the floor while you use the "
                          "machine; ramp to 100 after 5 idle minutes and drop "
                          "back the moment input resumes")
-    ap.add_argument("--cpu-threads", type=int, default=4,
+    ap.add_argument("--cpu-threads", type=_bounded(int, 1, 1024), default=4,
                     help="host commitment thread cap (RAYON_NUM_THREADS)")
-    ap.add_argument("--region-rows", type=int, default=256,
+    ap.add_argument("--region-rows", type=_bounded(int, 1, 1 << 20), default=256,
                     help="row-bases per GPU dispatch (burst size)")
-    ap.add_argument("--max-accepted", type=int, default=0,
+    ap.add_argument("--max-accepted", type=_bounded(int, 0, 1 << 31), default=0,
                     help="stop after this many accepted shares (0 = run forever)")
     ap.add_argument("--on-battery", choices=("pause", "low", "full"),
                     default="pause",
@@ -347,13 +368,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="plain scrolling logs even in a terminal; the live "
                          "dashboard already disables itself when stdout is "
                          "piped or redirected")
-    ap.add_argument("--max-job-age", type=float, default=300,
+    ap.add_argument("--max-job-age", type=_bounded(float, 0, 86400, " s"),
+                    default=300,
                     help="watchdog: if the pool sends nothing for this many "
                          "seconds, drop the connection and reconnect — a pool "
                          "that keeps TCP open but stops sending jobs would "
                          "otherwise leave you grinding a stale job forever "
                          "(0 = off)")
-    ap.add_argument("--time-limit", type=float, default=0,
+    ap.add_argument("--time-limit", type=_bounded(float, 0, 3.15e9, " s"),
+                    default=0,
                     help="stop after N seconds (0 = none)")
     return ap
 
