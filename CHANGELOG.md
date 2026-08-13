@@ -3,10 +3,11 @@
 Notable changes, per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.4] — 2026-08-13
 
 Three loose ends left by the v0.2.3 pass, plus what looking at the first one
-properly turned up.
+properly turned up. No behaviour change to the kernels or the wire protocol;
+`--self-test` is unchanged and still passes with 53 exact checks.
 
 ### Fixed
 
