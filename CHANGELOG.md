@@ -3,6 +3,58 @@
 Notable changes, per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.3] — 2026-08-13
+
+A QA pass over the whole repo focused on one theme: **a bad job must be
+refused, never a traceback.** Both sources of a bad job — the command line
+and the pool — could end in an uncaught Python exception on a user's screen,
+and one of them could instead mine forever without ever being able to win.
+No behaviour change to the kernels or the wire protocol; `--self-test` is
+unchanged and still passes with 53 exact checks.
+
+### Added
+
+- `reference.validate_shape` — a restatement of upstream's own
+  `zk-pow/src/api/sanity_checks.rs::public_params_sanity_check`, covering the
+  shape a user can set from the command line, run once at startup for both
+  mining and `--benchmark`. Each rule carries the flag it constrains, so a
+  refusal reads as instructions rather than as a stack trace.
+- `tools/check_job_sanity.py` — 11 bad shapes must exit 2 with the rule
+  named and no traceback, the shipped default must still pass, and a fake
+  pool sending a zero target and two wrong-length headers must be survived
+  with the miner going on to mine the next good job. CI picks it up
+  automatically (it globs `tools/check_*.py`).
+
+### Fixed
+
+- **A `--rank` that is not a power of two mined forever and could never
+  win.** Noise generation draws its permutation indices with `u & (rank-1)`,
+  a mask that only works for powers of two, and consensus separately
+  requires `32 ≤ rank ≤ 1024` and `16·rank ≤ k ≤ 4·rank²`. `--rank 100`
+  passed every existing check, connected, swept the GPU at full speed, and
+  produced tiles upstream's verifier would reject forever — with nothing on
+  screen to say so. This is exactly the silent-failure class the project
+  exists to refuse, reachable from one mistyped flag; it is now refused
+  before the Metal context is even created.
+- **Out-of-range shape flags printed a raw traceback.** `--m 100` raised an
+  `AssertionError` from deep in `Pattern.valid_offsets`, `--rows 5,0` one
+  from `Pattern.from_list`, and `--k 0` surfaced as `MetalError:
+  pm_alloc(0) failed`. All now exit 2 through `argparse` like any other bad
+  flag. The two asserts became `ValueError`s while passing: they validate
+  user input, and `python -O` would have stripped them.
+- **A pool sending `target: "0"` crashed the miner** with
+  `ZeroDivisionError` the moment the job was adopted (the expected-tiles
+  figure divides by the bound), and a negative target raised `OverflowError`
+  — both one line away from the existing guard for the *opposite* extreme,
+  `bound overflows 2^256`.
+- **A pool sending a wrong-length header crashed the miner hours later.**
+  A 40- or 96-byte header sailed past parsing, committed grids to a job that
+  could never verify, and raised `ValueError: Expected 76 bytes` only once a
+  tile finally won — the worst possible moment, and after an unbounded
+  stretch of wasted mining. Both checks now live in `Job.__post_init__`, so
+  the reader thread logs and drops the line, the miner waits for a usable
+  job, and every future dialect inherits the guard by constructing a `Job`.
+
 ## [0.2.2] — 2026-08-12
 
 Two QA passes over the whole repo, with the v0.2 additions in focus. The two

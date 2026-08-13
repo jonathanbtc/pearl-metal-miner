@@ -49,6 +49,10 @@ CHUNK_LEN = 1024  # BLAKE3 chunk == Merkle leaf size
 # zk-pow/src/api/sanity_checks.rs
 PENALTY_BASE_RANK = 128
 
+# zk-pow/src/circuit/chip/blake3/program.rs — bytes per dword; the dot-product
+# length must be a multiple of it.
+DWORD_SIZE = 8
+
 # zk-pow/src/ffi/mine.rs — committed matrix element range, inclusive.
 # The verifier enforces exactly this range on opened strips (IRANGE7P1).
 SIGNAL_MIN = -64
@@ -185,9 +189,12 @@ class Pattern:
 
     @classmethod
     def from_list(cls, pattern: list[int]) -> "Pattern":
-        assert pattern and pattern[0] == 0 and all(
-            a < b for a, b in zip(pattern, pattern[1:])
-        ), "pattern must be sorted, deduplicated, and start at 0"
+        # ValueError, not assert: this is user input (--rows/--cols), and
+        # `python -O` would strip an assert and let a malformed pattern through.
+        if not (pattern and pattern[0] == 0 and all(
+                a < b for a, b in zip(pattern, pattern[1:]))):
+            raise ValueError("pattern must be sorted, deduplicated, and start "
+                             f"at 0 (got {pattern})")
         p = list(pattern)
         shape_vec: list[tuple[int, int]] = []
         while len(p) > 1:
@@ -242,7 +249,9 @@ class Pattern:
     def valid_offsets(self, dim: int) -> list[int]:
         """ffi/mine.rs::threads_partition — the tile bases the reference miner
         sweeps. Tiles at these bases partition [0, dim)."""
-        assert dim % self.period() == 0, "dimension must be divisible by pattern period"
+        if dim <= 0 or dim % self.period() != 0:
+            raise ValueError(f"dimension {dim} must be a positive multiple of "
+                             f"the pattern period {self.period()}")
         return [o for o in range(dim) if self.offset_is_valid(o)]
 
 
@@ -348,3 +357,54 @@ def penalized_factor(h: int, w: int, k: int, rank: int) -> int:
 def jackpot_value(digest: bytes) -> int:
     """The digest as the integer compared against the bound: LITTLE-endian."""
     return int.from_bytes(digest, "little")
+
+
+# ── Job-shape admissibility ──────────────────────────────────────────────────
+
+def validate_shape(m: int, n: int, k: int, rank: int,
+                   rows_pattern: Pattern, cols_pattern: Pattern) -> None:
+    """sanity_checks.rs::public_params_sanity_check, restated for the shape a
+    user can set from the command line. Raises ValueError naming the rule.
+
+    This is the silent failure mode at its most reachable: consensus refuses
+    any proof outside these bounds, and noise generation only works at all for
+    power-of-two ranks (`u & (rank-1)` is a mask), so a single mistyped
+    `--rank` sweeps the GPU for days and can never produce a share the chain
+    would take — with nothing on screen to say so. Checked once, at startup.
+    """
+    h, w = rows_pattern.size(), cols_pattern.size()
+    if rank < 32 or rank > 1024 or (rank & (rank - 1)) != 0:
+        raise ValueError(f"--rank must be a power of two from 32 to 1024 "
+                         f"(got {rank}); the default 128 is the only one "
+                         f"without a difficulty penalty")
+    if k % 64 or k < 1024 or k > 1 << 16:
+        raise ValueError(f"--k must be a multiple of 64 between 1024 and 65536 "
+                         f"(got {k})")
+    if k < 16 * rank:
+        raise ValueError(f"--k must be at least 16×rank = {16 * rank} at "
+                         f"--rank {rank} (got {k})")
+    if k > 4 * rank * rank:
+        raise ValueError(f"--k must be at most 4×rank² = {4 * rank * rank} at "
+                         f"--rank {rank} (got {k})")
+    if h % TILE_H or w % TILE_H:
+        raise ValueError(f"--rows and --cols must each list a multiple of "
+                         f"{TILE_H} offsets (got {h} rows, {w} cols)")
+    if not 32 <= h * w <= 256:
+        raise ValueError(f"the hash tile must hold 32 to 256 elements; "
+                         f"--rows × --cols is {h}×{w} = {h * w}")
+    dpl = dot_product_length(k, rank)
+    if dpl % DWORD_SIZE:
+        raise ValueError(f"k − k%rank must be a multiple of {DWORD_SIZE} "
+                         f"(got {dpl} at --k {k} --rank {rank})")
+    if m <= 0 or n <= 0 or m > 1 << 24 or n > 1 << 24:
+        raise ValueError(f"--m and --n must be between 1 and {1 << 24} "
+                         f"(got m={m}, n={n})")
+    if (h + w) * dpl > 1 << 22:
+        raise ValueError(f"the opened strips would be {(h + w) * dpl} bytes; "
+                         f"consensus allows at most {1 << 22}")
+    if m % rows_pattern.period():
+        raise ValueError(f"--m must be a multiple of the --rows pattern period "
+                         f"{rows_pattern.period()} (got {m})")
+    if n % cols_pattern.period():
+        raise ValueError(f"--n must be a multiple of the --cols pattern period "
+                         f"{cols_pattern.period()} (got {n})")

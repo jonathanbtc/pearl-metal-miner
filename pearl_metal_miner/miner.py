@@ -398,6 +398,30 @@ def _apply_config(args, explicit: set[str]):
         setattr(args, key, cfg.get(key))
 
 
+def _shape_from_args(args, ap) -> JobShape:
+    """The job shape the flags ask for, refused at startup if consensus would
+    never accept it. Every failure here is a typo in an advanced flag, so it
+    exits like any other bad flag — one line naming the rule, never a
+    traceback, and never a run that sweeps forever and can't win."""
+    def offsets(flag: str, text: str) -> list[int]:
+        try:
+            return [int(x) for x in text.split(",")]
+        except ValueError:
+            raise ValueError(f"--{flag} must be comma-separated whole numbers "
+                             f"(got {text!r})") from None
+
+    try:
+        shape = JobShape(
+            k=args.k, r=args.rank,
+            rows_pattern=ref.Pattern.from_list(offsets("rows", args.rows)),
+            cols_pattern=ref.Pattern.from_list(offsets("cols", args.cols)))
+        ref.validate_shape(args.m, args.n, args.k, args.rank,
+                           shape.rows_pattern, shape.cols_pattern)
+    except ValueError as e:
+        ap.error(f"job shape: {e}")
+    return shape
+
+
 def _interrupted(note: str) -> int:
     """Ctrl-C is a designed exit for every command, not only the mining loop:
     one line, never a traceback. Always non-zero — an interrupted command
@@ -428,10 +452,11 @@ def run(argv=None) -> int:
             return _interrupted("self-test interrupted — it did NOT pass; "
                                 "rerun it before mining")
     _apply_config(args, _explicit_dests(argv))
+    shape = _shape_from_args(args, ap)
     if args.benchmark:
         from . import benchmark
         try:
-            return benchmark.run(args)
+            return benchmark.run(args, shape)
         except KeyboardInterrupt:
             return _interrupted("benchmark interrupted — no result "
                                 "(it needs the full run to measure)")
@@ -459,10 +484,6 @@ def run(argv=None) -> int:
             f"(from {os.path.basename(wallet_path)} — that file is the only "
             f"claim on anything mined; back it up)")
 
-    shape = JobShape(
-        k=args.k, r=args.rank,
-        rows_pattern=ref.Pattern.from_list([int(x) for x in args.rows.split(",")]),
-        cols_pattern=ref.Pattern.from_list([int(x) for x in args.cols.split(",")]))
     factor = ref.difficulty_factor(shape.h, shape.w, args.k, args.rank)
     pfactor = ref.penalized_factor(shape.h, shape.w, args.k, args.rank)
     if factor != pfactor:
