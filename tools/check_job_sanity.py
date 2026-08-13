@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline check: a bad job is refused, never a traceback.
 
-Two sources of a bad job, both previously ending in an uncaught Python
+Three sources of a bad run, all previously ending in an uncaught Python
 exception on a user's screen:
 
   the flags   an out-of-range --m/--n/--k/--rank/--rows/--cols. Consensus
@@ -19,12 +19,20 @@ exception on a user's screen:
               time, so the reader logs the line and the miner waits for a
               usable job.
 
+  the numbers an out-of-range value on any numeric flag. Each one has a range
+              it means, and out of range they misbehave in ways that read as
+              bugs rather than as typos: --region-rows 0 divided by zero on
+              the general kernel, a negative --max-job-age made the watchdog
+              fire every pass and reconnect forever, --intensity 0 silently
+              ran ~100x slow. The same values in config.toml take the
+              opposite path on purpose — warn and fall back, never stop a
+              machine that was mining fine.
+
 Stdlib only; no traffic beyond loopback.
 
     .venv/bin/python tools/check_job_sanity.py
 """
 
-import json
 import os
 import signal
 import socket
@@ -39,6 +47,26 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 
 from check_shutdown import TEST_ADDRESS, Capture, send_line  # noqa: E402
+
+# (flags, a fragment the error message must contain). Numeric flags are bounded
+# because several of them misbehave badly out of range rather than obviously:
+# --region-rows 0 divides by zero on the general kernel, a negative
+# --max-job-age makes the watchdog fire every pass and reconnect forever, and
+# a negative --time-limit/--max-accepted exits before mining anything.
+BAD_NUMBERS = [
+    (["--intensity", "0"], "between 1 and 100"),
+    (["--intensity", "101"], "between 1 and 100"),
+    (["--intensity", "-5"], "between 1 and 100"),
+    (["--region-rows", "0"], "between 1 and"),
+    (["--cpu-threads", "0"], "between 1 and 1024"),
+    (["--max-job-age", "-1"], "between 0 and"),
+    (["--time-limit", "-1"], "between 0 and"),
+    (["--max-accepted", "-1"], "between 0 and"),
+    (["--port", "0"], "between 1 and 65535"),
+    (["--port", "70000"], "between 1 and 65535"),
+    (["--benchmark-seconds", "0"], "between 1 and"),
+    (["--intensity", "abc"], "whole number"),
+]
 
 # (flags, a fragment the error message must contain)
 BAD_SHAPES = [
@@ -56,13 +84,13 @@ BAD_SHAPES = [
 ]
 
 
-def check_bad_shapes() -> bool:
-    """Every bad shape must exit 2 with a named rule and no traceback. These
-    run without a GPU or a pool: the refusal happens before either is touched,
-    which is the point — nothing is spun up for a shape that cannot win."""
+def _refuses(cases, label: str) -> bool:
+    """Every case must exit 2 with a named rule and no traceback. These run
+    without a GPU or a pool: the refusal happens before either is touched,
+    which is the point — nothing is spun up for a run that cannot work."""
     env = dict(os.environ, PRL_CONFIG=os.path.join(HERE, "_no_such_config.toml"))
     bad = []
-    for flags, want in BAD_SHAPES:
+    for flags, want in cases:
         r = subprocess.run(
             [sys.executable, "-m", "pearl_metal_miner.miner", *flags,
              "--address", TEST_ADDRESS, "--time-limit", "1"],
@@ -75,10 +103,10 @@ def check_bad_shapes() -> bool:
         elif want not in text:
             bad.append(f"{flags}: message missing {want!r}: {text.strip()[-160:]}")
     if bad:
-        print("FAIL bad-shapes: " + "; ".join(bad))
+        print(f"FAIL {label}: " + "; ".join(bad))
         return False
-    print(f"PASS bad-shapes: {len(BAD_SHAPES)} bad shapes refused at startup, "
-          f"exit 2, rule named, no traceback")
+    print(f"PASS {label}: {len(cases)} refused at startup, exit 2, rule named, "
+          f"no traceback")
     return True
 
 
@@ -185,10 +213,44 @@ def check_malformed_jobs() -> bool:
     return True
 
 
+def check_config_out_of_range() -> bool:
+    """The mirror image of the flags: an out-of-range value in config.toml must
+    WARN and fall back to the default, never stop the miner. A typo in a file
+    you edited last month should not strand a machine that was mining fine."""
+    import tempfile
+
+    from pearl_metal_miner import config as cfg_mod
+    warnings: list[str] = []
+    with tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False) as f:
+        f.write("intensity = 250\nport = 99999\nmax_job_age = -5\n"
+                "electricity_usd_per_kwh = -0.2\nworker = \"fine\"\n")
+        path = f.name
+    try:
+        vals = cfg_mod.load(path, log=lambda *a: warnings.append(" ".join(map(str, a))))
+    finally:
+        os.unlink(path)
+    problems = []
+    for key in ("intensity", "port", "max_job_age", "electricity_usd_per_kwh"):
+        if key in vals:
+            problems.append(f"{key} survived at {vals[key]}")
+        if not any(key in w for w in warnings):
+            problems.append(f"{key} dropped silently")
+    if vals.get("worker") != "fine":
+        problems.append("a valid key next to bad ones was lost")
+    if problems:
+        print(f"FAIL config-range: {'; '.join(problems)}\n  warnings: {warnings}")
+        return False
+    print("PASS config-range: out-of-range config values warn and fall back; "
+          "valid keys beside them survive")
+    return True
+
+
 def main() -> int:
     signal.alarm(900)
     ok = check_default_shape_still_valid()
-    ok = check_bad_shapes() and ok
+    ok = _refuses(BAD_SHAPES, "bad-shapes") and ok
+    ok = _refuses(BAD_NUMBERS, "bad-numbers") and ok
+    ok = check_config_out_of_range() and ok
     ok = check_malformed_jobs() and ok
     print("all checks passed" if ok else "CHECKS FAILED")
     return 0 if ok else 1

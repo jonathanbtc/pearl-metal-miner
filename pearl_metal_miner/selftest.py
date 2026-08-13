@@ -298,7 +298,17 @@ def test_pow(m: Metal, shape_row, rng: np.random.Generator):
 
 def test_pow_v2(m: Metal, rng: np.random.Generator):
     """The blocked kernel must produce byte-identical digests to the general
-    kernel's reference across every tile, plus identical hit sets."""
+    kernel's reference across every tile, plus identical hit sets.
+
+    Note the shape: k=1024 at rank 128 is deliberately BELOW consensus's
+    `k >= 16*rank`, so `reference.validate_shape` would refuse it as a mining
+    shape — and does, for anything a user types. It is legitimate here because
+    this stage compares the GPU against the NumPy reference and nothing else:
+    the two must agree on identical inputs whatever the dimensions, and a
+    small k keeps the exhaustive per-tile comparison quick. Nothing produced
+    here is ever offered to a verifier. Stage 4 is where a real, admissible
+    shape goes end-to-end.
+    """
     k, r = 1024, 128
     m_dim, n_dim = 256, 256
     job = JobShape(k=k, r=r,

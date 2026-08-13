@@ -350,6 +350,7 @@ measure.
 | `bound overflows 2^256 — refusing job` | the pool sent an unusably easy target; the miner waits for a sane job (open an issue if it persists) |
 | `[stratum] parse error: job … header is N bytes` / `target 0 is not positive` | the pool sent a malformed job; it's logged and dropped, and mining continues on the next good one (open an issue if every job does this) |
 | `error: job shape: …` at startup | a `--m/--n/--k/--rank/--rows/--cols` value consensus would never accept — the message names the rule. Omit the flag to get the default shape back |
+| `error: argument --…: must be between X and Y` | every numeric flag has a range it means, and out of range several misbehave in ways that read as bugs; the message names the range. The same value in `config.toml` warns and falls back instead of stopping the miner |
 | Mac hot / fans loud | lower `--intensity`, or use `--auto-intensity` with a low floor |
 
 **Seeing the wire.** `PRL_RAW=1 python -m pearl_metal_miner.miner …` logs

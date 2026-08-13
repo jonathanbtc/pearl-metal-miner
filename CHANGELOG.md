@@ -3,6 +3,41 @@
 Notable changes, per release. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+Three loose ends left by the v0.2.3 pass, plus what looking at the first one
+properly turned up.
+
+### Fixed
+
+- **Numeric flags had no bounds, and several misbehaved badly without them.**
+  `--intensity` was documented as 1–100 and enforced nowhere: `--intensity 0`
+  didn't error, it made the miner ~100× slower, which reads as "broken"
+  rather than "you typed a bad number". Checking its neighbours found worse —
+  `--region-rows 0` raised `ZeroDivisionError` on the general kernel, a
+  negative `--max-job-age` made the watchdog fire every pass and reconnect
+  forever, and a negative `--time-limit`/`--max-accepted` exited before
+  mining anything. All eight numeric flags now carry the range they mean and
+  refuse anything outside it by name. The same values in `config.toml` take
+  the opposite path deliberately — warn and fall back to the default, per
+  that module's rule that a typo in a file never stops a machine that was
+  mining fine.
+- `Buf.array` guarded the only thing standing between a miscomputed view and
+  a read past the end of a GPU buffer with an `assert`, which `python -O`
+  strips. It is now a real check, plus a use-after-release guard.
+
+### Changed
+
+- `--self-test`'s blocked-kernel stage runs at k=1024, rank=128 — deliberately
+  below consensus's `k ≥ 16·rank`, so `validate_shape` would refuse it as a
+  *mining* shape. That is legitimate (the stage compares GPU against the NumPy
+  reference on identical inputs, where dimensions don't matter, and a small k
+  keeps the exhaustive per-tile comparison quick) but nothing said so. Now the
+  docstring does.
+- `tools/check_job_sanity.py` grew the numeric-flag cases and the config
+  warn-and-fall-back case: 11 bad shapes, 12 bad numbers, out-of-range config,
+  and the malformed-job pool.
+
 ## [0.2.3] — 2026-08-13
 
 A QA pass over the whole repo focused on one theme: **a bad job must be

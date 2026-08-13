@@ -45,6 +45,18 @@ KNOWN: dict[str, type | tuple] = {
     "assumed_network_hashrate": float,
 }
 
+# key -> (lo, hi) inclusive. The CLI refuses an out-of-range number outright
+# (argparse, exit 2); a config file must only warn and fall back to the
+# default, per this module's rule that a typo in a file never stops the miner.
+RANGES: dict[str, tuple[float, float]] = {
+    "port": (1, 65535),
+    "intensity": (1, 100),
+    "max_job_age": (0, 86400),
+    "electricity_usd_per_kwh": (0, 1000),
+    "assumed_prl_price_usd": (0, 1e9),
+    "assumed_network_hashrate": (0, 1e12),
+}
+
 
 def config_path() -> str:
     """The project-folder config; PRL_CONFIG overrides (tests, power users)."""
@@ -81,6 +93,11 @@ def load(path: str | None = None, log=print) -> dict:
                 f"(want {spec.__name__}); ignored")
         else:
             vals[key] = val
+    for key, (lo, hi) in RANGES.items():
+        if key in vals and not lo <= vals[key] <= hi:
+            log(f"config.toml: {key} = {vals[key]:g} is outside {lo:g}…{hi:g}; "
+                f"ignored")
+            del vals[key]
     return vals
 
 
